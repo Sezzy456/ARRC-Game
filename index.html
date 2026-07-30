@@ -1,0 +1,1448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Trash Tycoon Universal Proportional Scale</title>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    <style>
+        * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; }
+        html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #121212; overflow: hidden; display: flex; justify-content: center; align-items: center; }
+        #game-container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+
+    <script>
+    const TRASH_TYPES = {
+        ORGANIC: { id: 'organic', color: 0x4caf50, key: '1', items: ['Apple', 'Banana'] },
+        PAPER:   { id: 'paper',   color: 0x2196f3, key: '2', items: ['Paper', 'Box'] },
+        GLASS:   { id: 'glass',   color: 0x9c27b0, key: '3', items: ['Bottle', 'Jar'] },
+        PLASTIC: { id: 'plastic', color: 0xffeb3b, key: '4', items: ['Can', 'Jug'] }
+    };
+
+    class MainScene extends Phaser.Scene {
+        constructor() { super({ key: 'MainScene' }); }
+
+        init() {
+            this.state = {
+                money: 20,
+                xp: 0,
+                level: 1,
+                sessionSeconds: 0,
+                totalQuestsCompleted: 0,
+                
+                // Facility Stats
+                g1Fee: 1,
+                bagValue: 1,
+                tipStockpile: 10,
+                doubleTrashChance: 0.00,
+                maxTrashQueue: 1,
+
+                // Automation Timers
+                isGateAuto: false,
+                unlockedAutoQueue: false,
+                unlockedAutoSort: false,
+                autoSortTimer: 0,
+                autoSortDelay: 5000,
+                spawnDelay: 1600,
+                autoGateDelay: 2500,
+                autoGateTimer: 0,
+                autoQueueSpeed: 2500,
+                autoQueueTimer: 0,
+
+                // Combo Fire
+                comboCount: 0,
+                comboLevel: 0,
+                lastSortTime: 0,
+
+                // Upgrades
+                upgrades: {
+                    gateFee: { lvl: 0, max: 10, cost: 2 },
+                    gateSpawn: { lvl: 0, max: 5, cost: 4 },
+                    gateAuto: { lvl: 0, max: 1, cost: 1 },
+                    doubleTrash: { lvl: 0, max: 5, cost: 2 },
+                    queueCap: { lvl: 0, max: 9, cost: 1 },
+                    autoQueue: { lvl: 0, max: 1, cost: 4 },
+                    greenTier: { lvl: 1, max: 3, cost: 10 },
+                    blueTier: { lvl: 1, max: 3, cost: 10 },
+                    purpleTier: { lvl: 1, max: 3, cost: 10 },
+                    yellowTier: { lvl: 1, max: 3, cost: 10 }
+                },
+
+                gateFeeLvl: 0, gateFeeCost: 2,
+                gateSpawnLvl: 0, gateSpawnCost: 4,
+                gateAutoLvl: 0, gateAutoCost: 1,
+                tipDoubleLvl: 0, tipDoubleCost: 2,
+                tipAutoLvl: 0, tipAutoCost: 1,
+
+                // Prerequisites
+                unlockedWorkshopsFacility: false,
+                unlockedQuestsFacility: false,
+
+                unlockedGreenShop: false,
+                unlockedBlueShop: false,
+                unlockedPurpleShop: false,
+                unlockedYellowShop: false,
+
+                // Decorations
+                hasTrees: false,
+                hasBunting: false,
+                hasFairyLights: false,
+                hasGlassDecor: false,
+
+                // Inventory
+                resources: { organic: 0, paper: 0, glass: 0, plastic: 0 },
+                crafted: {
+                    fertilizer: 0, biofuel: 0, compost: 0,
+                    recycled_paper: 0, cardboard: 0, notebook: 0,
+                    glass_vase: 0, mirror: 0, lens: 0,
+                    filament: 0, plastic_brick: 0, pipe: 0
+                }
+            };
+
+            this.trashQueue = [];
+            this.customerQueue = [];
+            this.contracts = [];
+            this.craftingConveyor = [];
+            this.currentCraftJob = null;
+            this.activeModal = null;
+            this.activeUpgradeCategory = 'gate';
+            this.openQuickContainer = null;
+
+            this.categories = ['gate', 'tip', 'green_shop', 'blue_shop', 'purple_shop', 'yellow_shop'];
+            this.pressTimer = null;
+            this.isHolding = false;
+            this.layoutRebuildPending = false;
+        }
+
+        preload() { this.createPlaceholderTextures(); }
+
+        createPlaceholderTextures() {
+            const makeRect = (key, color, w = 40, h = 40) => {
+                const gfx = this.make.graphics({ x: 0, y: 0, add: false });
+                gfx.fillStyle(color, 1);
+                gfx.fillRect(0, 0, w, h);
+                gfx.generateTexture(key, w, h);
+            };
+
+            makeRect('person', 0xe91e63, 22, 38);
+            makeRect('bag', 0x222222, 12, 16);
+            makeRect('gate', 0x795548, 65, 65);
+            makeRect('tip', 0x8d6e63, 65, 65);
+            makeRect('truck', 0xff6f00, 85, 35);
+            makeRect('bin_green', TRASH_TYPES.ORGANIC.color, 48, 48);
+            makeRect('bin_blue', TRASH_TYPES.PAPER.color, 48, 48);
+            makeRect('bin_purple', TRASH_TYPES.GLASS.color, 48, 48);
+            makeRect('bin_yellow', TRASH_TYPES.PLASTIC.color, 48, 48);
+        }
+
+        create() {
+            this.scale.on('resize', this.handleResize, this);
+            
+            for (let i = 0; i < 3; i++) this.contracts.push(this.generateRandomContract(i));
+
+            this.buildLayout();
+
+            for (let i = 0; i < 3; i++) this.spawnCustomer();
+
+            this.time.addEvent({
+                delay: 1000,
+                callback: () => {
+                    this.state.sessionSeconds++;
+                    this.updateUI();
+                },
+                loop: true
+            });
+
+            this.input.keyboard.on('keydown', (e) => {
+                if (['1','2','3','4'].includes(e.key)) {
+                    const typeMap = { '1': 'organic', '2': 'paper', '3': 'glass', '4': 'plastic' };
+                    this.sortHeadTrash(typeMap[e.key]);
+                } else if (e.code === 'Space') {
+                    this.queueTrashFromTip();
+                }
+            });
+
+            this.spawnerEvent = this.time.addEvent({
+                delay: this.state.spawnDelay,
+                callback: () => { if (Math.random() < 0.75) this.spawnCustomer(); },
+                loop: true
+            });
+
+            // Auto-Gate Loop
+            this.time.addEvent({
+                delay: 50,
+                callback: () => {
+                    if (this.state.isGateAuto) {
+                        if (this.state.autoGateTimer < this.state.autoGateDelay) this.state.autoGateTimer += 50;
+                        const progress = Math.min(1, this.state.autoGateTimer / this.state.autoGateDelay);
+                        this.drawAutoGateProgress(progress);
+
+                        if (progress >= 1 && this.customerQueue.length > 0) {
+                            this.triggerGate();
+                            this.state.autoGateTimer = 0;
+                        }
+                    }
+                },
+                loop: true
+            });
+
+            // Auto-Queue Loop
+            this.time.addEvent({
+                delay: 50,
+                callback: () => {
+                    if (this.state.unlockedAutoQueue) {
+                        if (this.state.autoQueueTimer < this.state.autoQueueSpeed) this.state.autoQueueTimer += 50;
+                        const qProgress = Math.min(1, this.state.autoQueueTimer / this.state.autoQueueSpeed);
+                        this.drawAutoQueueProgress(qProgress);
+
+                        if (qProgress >= 1 && this.state.tipStockpile > 0 && this.trashQueue.length < this.state.maxTrashQueue) {
+                            this.queueTrashFromTip();
+                            this.state.autoQueueTimer = 0;
+                        }
+                    }
+                },
+                loop: true
+            });
+
+            // Auto-Sort Loop
+            this.time.addEvent({
+                delay: 50,
+                callback: () => {
+                    if (this.state.unlockedAutoSort && this.trashQueue.length > 0) {
+                        this.state.autoSortTimer += 50;
+                        const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
+                        this.drawAutoSortProgress(sortProgress);
+
+                        if (sortProgress >= 1) {
+                            this.sortHeadTrash(this.trashQueue[0].type);
+                            this.state.autoSortTimer = 0;
+                        }
+                    } else {
+                        this.drawAutoSortProgress(0);
+                    }
+                },
+                loop: true
+            });
+
+            // Streak Decay
+            this.time.addEvent({
+                delay: 800,
+                callback: () => {
+                    if (this.state.comboCount > 0 && this.time.now - this.state.lastSortTime > 1200) {
+                        this.state.comboCount = Math.max(0, this.state.comboCount - 5);
+                        this.updateComboDisplay();
+                    }
+                },
+                loop: true
+            });
+
+            this.time.addEvent({
+                delay: 22000,
+                callback: () => this.spawnBonusTruck(),
+                loop: true
+            });
+        }
+
+        requestLayoutRebuild() {
+            if (this.layoutRebuildPending) return;
+            this.layoutRebuildPending = true;
+            this.time.delayedCall(50, () => {
+                this.layoutRebuildPending = false;
+                this.buildLayout();
+            });
+        }
+
+        generateRandomContract(id) {
+            const items = [
+                { name: 'Fertilizer', key: 'fertilizer', val: 15, xp: 20, col: '#81c784' },
+                { name: 'Biofuel', key: 'biofuel', val: 30, xp: 40, col: '#81c784' },
+                { name: 'Recycled Paper', key: 'recycled_paper', val: 25, xp: 35, col: '#64b5f6' },
+                { name: 'Cardboard', key: 'cardboard', val: 50, xp: 70, col: '#64b5f6' },
+                { name: 'Glass Vase', key: 'glass_vase', val: 45, xp: 60, col: '#ba68c8' },
+                { name: 'Mirror', key: 'mirror', val: 90, xp: 120, col: '#ba68c8' },
+                { name: '3D Filament', key: 'filament', val: 75, xp: 100, col: '#ffd54f' }
+            ];
+            const chosen = items[Math.floor(Math.random() * items.length)];
+            const req = Math.floor(Math.random() * 3) + 1;
+
+            return {
+                id, itemKey: chosen.key, name: chosen.name, color: chosen.col,
+                req: req, rewardCash: chosen.val * req, rewardXP: chosen.xp * req
+            };
+        }
+
+        handleResize(gameSize) {
+            this.cameras.main.setViewport(0, 0, gameSize.width, gameSize.height);
+            this.requestLayoutRebuild();
+        }
+
+        buildLayout() {
+            if (this.mainContainer) this.mainContainer.destroy(true);
+            this.mainContainer = this.add.container(0, 0);
+
+            const width = this.scale.width;
+            const height = this.scale.height;
+            const isMobile = height > width && width < 600;
+
+            // --- UNIVERSAL PROPORTIONAL SCALING ENGINE ---
+            const targetMinHeight = isMobile ? 830 : 710;
+            const scaleFactor = Math.min(1, height / targetMinHeight);
+            
+            // Design at logical height
+            const logicalHeight = Math.max(height, targetMinHeight);
+
+            this.renderDecorationsGraphics(width, logicalHeight);
+
+            // ANCHORS (DESIGNED WITH TIGHTENED GAP BETWEEN QUESTS & WORKSHOPS)
+            const topBarY = isMobile ? 30 : 35;
+            const questY = topBarY + 95;
+            
+            // TIGHTENED QUEST -> WORKSHOP GAP (108px vs 125px)
+            const workshopHeaderY = questY + (isMobile ? 108 : 120);
+            const conveyorY = workshopHeaderY + 26;
+            const workshopY = conveyorY + 48; // DISTINCT GAP UNDER CONVEYOR BEFORE SHOPS
+
+            // BOTTOM ANCHORS
+            const bottomY = isMobile ? logicalHeight - 200 : logicalHeight - 140;
+            const binY = bottomY - 78;
+            const queueY = binY - 58;
+
+            const binSpacing = Math.min(width * 0.22, 100);
+            const startBinX = (width - (binSpacing * 3)) / 2;
+
+            this.renderCenteredXPBar(width, topBarY);
+            this.renderTopHUDBar(width, topBarY, isMobile);
+            this.createTopNavButtons(width);
+
+            // QUESTS BOARD
+            if (this.state.unlockedQuestsFacility) {
+                const questHeader = this.add.text(width / 2, questY - 40, `📜 QUESTS (${this.state.totalQuestsCompleted} Done) 📜`, { fontSize: '15px', style: 'bold', color: '#ffca28' }).setOrigin(0.5);
+                this.mainContainer.add(questHeader);
+                this.renderContractsUI(width, questY);
+            } else if (this.state.unlockedWorkshopsFacility) {
+                const canBuyQuests = this.state.money >= 15;
+                const btnBuyQuests = this.add.text(width / 2, topBarY + 48, 'UNLOCK QUESTS BOARD ($15)', {
+                    fontSize: '13px', style: 'bold',
+                    backgroundColor: canBuyQuests ? '#ffd700' : '#333333',
+                    color: canBuyQuests ? '#000000' : '#888888', padding: {x: 10, y: 6}
+                }).setOrigin(0.5).setInteractive();
+
+                btnBuyQuests.on('pointerdown', () => {
+                    if (this.state.money >= 15) {
+                        this.state.money -= 15;
+                        this.state.unlockedQuestsFacility = true;
+                        this.requestLayoutRebuild();
+                    }
+                });
+                this.mainContainer.add(btnBuyQuests);
+            }
+
+            // WORKSHOPS (TITLE -> CONVEYOR -> GAP -> WORKSHOP CARDS)
+            if (this.state.unlockedWorkshopsFacility) {
+                const shopHeader = this.add.text(width / 2, workshopHeaderY, '🛠️ WORKSHOPS 🛠️', { fontSize: '17px', style: 'bold', color: '#4fc3f7' }).setOrigin(0.5);
+                this.mainContainer.add(shopHeader);
+
+                this.renderConveyorHUD(width, conveyorY);
+                this.renderWorkshopsUI(width, logicalHeight, workshopY);
+            } else {
+                const canBuyWorkshops = this.state.money >= 10;
+                const btnBuyWS = this.add.text(width / 2, workshopHeaderY, 'UNLOCK WORKSHOPS ($10)', {
+                    fontSize: '13px', style: 'bold',
+                    backgroundColor: canBuyWorkshops ? '#00e676' : '#333333',
+                    color: canBuyWorkshops ? '#000000' : '#888888', padding: {x: 10, y: 6}
+                }).setOrigin(0.5).setInteractive();
+
+                btnBuyWS.on('pointerdown', () => {
+                    if (this.state.money >= 10) {
+                        this.state.money -= 10;
+                        this.state.unlockedWorkshopsFacility = true;
+                        this.requestLayoutRebuild();
+                    }
+                });
+                this.mainContainer.add(btnBuyWS);
+            }
+
+            // QUEUE ROW
+            this.queueY = queueY;
+            this.queueStartX = startBinX;
+
+            this.queueCounterText = this.add.text(width * 0.72, queueY, `0/${this.state.maxTrashQueue}`, { fontSize: '14px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            this.queueHighlight = this.add.graphics();
+            this.queueHighlight.lineStyle(2.5, 0xffd700, 1);
+            this.queueHighlight.strokeRect(-20, -20, 40, 40);
+            this.queueHighlight.setVisible(false);
+
+            const capCost = this.state.upgrades.queueCap.cost;
+            const canAffordCap = this.state.money >= capCost;
+            const capMaxed = this.state.upgrades.queueCap.lvl >= this.state.upgrades.queueCap.max || this.state.maxTrashQueue >= 10;
+            const btnCapText = capMaxed ? 'MAX' : `+Cap ($${capCost})`;
+
+            this.btnUpgradeCap = this.add.text(width * 0.88, queueY, btnCapText, {
+                fontSize: '11px', style: 'bold',
+                backgroundColor: capMaxed ? '#333333' : (canAffordCap ? '#00e676' : '#424242'),
+                color: capMaxed ? '#888888' : (canAffordCap ? '#000000' : '#aaaaaa'), padding: { x: 6, y: 4 }
+            }).setOrigin(0.5);
+
+            if (!capMaxed && canAffordCap) {
+                this.btnUpgradeCap.setInteractive().on('pointerup', () => {
+                    this.state.money -= this.state.upgrades.queueCap.cost;
+                    this.state.upgrades.queueCap.lvl++;
+                    this.state.upgrades.queueCap.cost *= 2;
+                    this.state.maxTrashQueue = 1 + this.state.upgrades.queueCap.lvl;
+                    this.requestLayoutRebuild();
+                });
+            }
+
+            this.mainContainer.add([this.queueCounterText, this.btnUpgradeCap, this.queueHighlight]);
+
+            // BINS
+            this.bins = [];
+            const binData = [
+                { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', count: this.state.resources.organic },
+                { id: 'paper', key: '2', name: 'BLUE', sprite: 'bin_blue', count: this.state.resources.paper },
+                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', count: this.state.resources.glass },
+                { id: 'plastic', key: '4', name: 'PLAST', sprite: 'bin_yellow', count: this.state.resources.plastic }
+            ];
+
+            binData.forEach((b, idx) => {
+                const bx = startBinX + (idx * binSpacing);
+                const sprite = this.add.sprite(bx, binY, b.sprite).setInteractive();
+                const label = this.add.text(bx, binY - 32, `[${b.key}] ${b.name}`, { fontSize: '11px', color: '#fff', style: 'bold' }).setOrigin(0.5);
+                const countText = this.add.text(bx, binY + 4, `${b.count}`, { fontSize: '15px', color: '#000000', style: 'bold' }).setOrigin(0.5);
+
+                sprite.on('pointerdown', () => this.sortHeadTrash(b.id));
+                this.bins.push({ sprite, id: b.id, x: bx, y: binY, countText });
+                this.mainContainer.add([sprite, label, countText]);
+            });
+
+            // GATE & TIP
+            this.gatePos = { x: width * 0.35, y: bottomY };
+            this.tipPos = { x: width * 0.65, y: bottomY };
+
+            this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
+            this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE (TAP)', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+
+            const btnGateUpArrow = this.add.text(this.gatePos.x - 45, bottomY - 18, '▲', { fontSize: '14px', style: 'bold', color: '#ffd700', backgroundColor: '#222', padding: 4 })
+                .setOrigin(0.5).setInteractive().on('pointerup', () => {
+                    this.openQuickContainer = (this.openQuickContainer === 'gate') ? null : 'gate';
+                    this.requestLayoutRebuild();
+                });
+
+            this.autoGateGfx = this.add.graphics();
+            this.autoQueueGfx = this.add.graphics();
+            this.autoSortGfx = this.add.graphics();
+            this.longPressGfx = this.add.graphics().setDepth(10);
+
+            this.setupLongPress(this.gateSprite, 'gate');
+
+            this.tipSprite = this.add.sprite(this.tipPos.x, this.tipPos.y, 'tip').setInteractive({ useHandCursor: true });
+            this.tipLabel = this.add.text(this.tipPos.x, bottomY + 38, 'THE TIP (TAP)', { fontSize: '11px', color: '#fff' }).setOrigin(0.5);
+            
+            const btnTipUpArrow = this.add.text(this.tipPos.x + 45, bottomY - 18, '▲', { fontSize: '14px', style: 'bold', color: '#ffd700', backgroundColor: '#222', padding: 4 })
+                .setOrigin(0.5).setInteractive().on('pointerup', () => {
+                    this.openQuickContainer = (this.openQuickContainer === 'tip') ? null : 'tip';
+                    this.requestLayoutRebuild();
+                });
+
+            this.tipStockText = this.add.text(this.tipPos.x, bottomY, `${this.state.tipStockpile}`, { fontSize: '18px', color: '#000000', style: 'bold' }).setOrigin(0.5);
+            this.fireText = this.add.text(this.tipPos.x, bottomY - 40, '', { fontSize: '20px' }).setOrigin(0.5);
+
+            this.setupLongPress(this.tipSprite, 'tip');
+
+            this.mainContainer.add([
+                this.gateSprite, this.gateText, btnGateUpArrow, this.autoGateGfx, this.autoQueueGfx, this.autoSortGfx,
+                this.tipSprite, this.tipLabel, btnTipUpArrow, this.tipStockText, this.fireText, this.longPressGfx
+            ]);
+
+            if (this.openQuickContainer === 'gate') this.renderQuickUpgradesBox(this.gatePos.x - 70, bottomY - 100, 'gate');
+            if (this.openQuickContainer === 'tip') this.renderQuickUpgradesBox(this.tipPos.x + 10, bottomY - 100, 'tip');
+
+            // --- APPLY PROPORTIONAL CONTAINER SCALE IF SCREEN HEIGHT < TARGET ---
+            if (scaleFactor < 1) {
+                this.mainContainer.setScale(scaleFactor);
+                this.mainContainer.x = (width - (width * scaleFactor)) / 2;
+            }
+
+            this.updateUI();
+            this.renderHorizontalQueue();
+            this.repositionCustomerQueue();
+        }
+
+        renderConveyorHUD(w, y) {
+            let statusText = '⚙️ Conveyor Idle';
+            if (this.currentCraftJob) {
+                const nextNames = this.craftingConveyor.map(j => j.recipeName).join(' ➔ ');
+                statusText = `🔥 COOKING: ${this.currentCraftJob.recipeName}${nextNames ? ' | NEXT: ' + nextNames : ''}`;
+            }
+
+            const hudBox = this.add.text(w / 2, y, statusText, {
+                fontSize: '11px', style: 'bold', color: this.currentCraftJob ? '#ffca28' : '#777777',
+                backgroundColor: '#111111', padding: { x: 8, y: 3 }
+            }).setOrigin(0.5);
+
+            this.mainContainer.add(hudBox);
+        }
+
+        renderDecorationsGraphics(w, h) {
+            if (this.state.hasBunting) {
+                const gfx = this.add.graphics();
+                const colors = [0x2196f3, 0xff1744, 0xffeb3b, 0x4caf50];
+                let cIdx = 0;
+                for (let x = 15; x < w - 20; x += 25) {
+                    gfx.fillStyle(colors[cIdx % 4], 1);
+                    gfx.fillTriangle(x, 32, x + 20, 32, x + 10, 50);
+                    cIdx++;
+                }
+                this.mainContainer.add(gfx);
+            }
+
+            if (this.state.hasTrees) {
+                const gfx = this.add.graphics();
+                for (let x = 10; x < w; x += 30) {
+                    gfx.fillStyle(0x2e7d32, 1);
+                    gfx.fillRect(x, 5, 14, 22);
+                    gfx.fillRect(x, h - 27, 14, 22);
+
+                    if (this.state.hasFairyLights) {
+                        gfx.fillStyle(0xffeb3b, 1);
+                        gfx.fillCircle(x + 3, 9, 1.5);
+                        gfx.fillCircle(x + 11, 15, 1.5);
+                        gfx.fillCircle(x + 7, 21, 1.5);
+
+                        gfx.fillCircle(x + 3, h - 23, 1.5);
+                        gfx.fillCircle(x + 11, h - 17, 1.5);
+                        gfx.fillCircle(x + 7, h - 11, 1.5);
+                    }
+                }
+                this.mainContainer.add(gfx);
+            }
+
+            if (this.state.hasGlassDecor) {
+                const gfx = this.add.graphics();
+                const cols = [0x9c27b0, 0x2196f3, 0xe91e63, 0xffeb3b];
+                const halfW = 14; const halfH = 28;
+                
+                [18, w - 18].forEach(sideX => {
+                    for (let y = 110; y < h - 110; y += 65) {
+                        const col = cols[Math.floor(y / 65) % 4];
+
+                        gfx.fillStyle(col, 1);
+                        gfx.beginPath();
+                        gfx.moveTo(sideX, y - halfH);
+                        gfx.lineTo(sideX + halfW, y);
+                        gfx.lineTo(sideX, y + halfH);
+                        gfx.lineTo(sideX - halfW, y);
+                        gfx.closePath();
+                        gfx.fillPath();
+
+                        gfx.fillStyle(0xffffff, 0.85);
+                        gfx.beginPath();
+                        gfx.moveTo(sideX - 3, y - (halfH / 2) - 3);
+                        gfx.lineTo(sideX + (halfW / 2) - 3, y - 3);
+                        gfx.lineTo(sideX - 3, y + (halfH / 2) - 3);
+                        gfx.lineTo(sideX - (halfW / 2) - 3, y - 3);
+                        gfx.closePath();
+                        gfx.fillPath();
+                    }
+                });
+                this.mainContainer.add(gfx);
+            }
+        }
+
+        renderContractsUI(w, y) {
+            const cardW = Math.min(w * 0.28, 125);
+            const cardH = 80;
+            const gap = 12;
+            const startX = (w - (3 * cardW + 2 * gap)) / 2 + (cardW / 2);
+
+            this.contracts.forEach((c, idx) => {
+                const cx = startX + (idx * (cardW + gap));
+                const current = this.state.crafted[c.itemKey] || 0;
+                const canFulfill = current >= c.req;
+                const outlineColor = Phaser.Display.Color.ValueToColor(c.color).color;
+
+                const cardBg = this.add.graphics();
+                cardBg.fillStyle(canFulfill ? 0x1b5e20 : 0x222222, 0.95);
+                cardBg.fillRect(cx - (cardW/2), y - 24, cardW, cardH);
+                cardBg.lineStyle(2, outlineColor, 1);
+                cardBg.strokeRect(cx - (cardW/2), y - 24, cardW, cardH);
+
+                const txt = this.add.text(cx, y - 1, `${c.req} ${c.name}\n($${c.rewardCash} | +${c.rewardXP}XP)`, {
+                    fontSize: '11px', style: 'bold', color: c.color, align: 'center', wordWrap: { width: cardW - 8 }, lineSpacing: 3
+                }).setOrigin(0.5);
+                
+                const btnHandIn = this.add.text(cx, y + 28, canFulfill ? '[ SELL ]' : `(${current}/${c.req})`, {
+                    fontSize: '10.5px', style: 'bold', backgroundColor: canFulfill ? '#00e676' : '#424242', color: canFulfill ? '#000' : '#aaa', padding: {x: 6, y: 3}
+                }).setOrigin(0.5);
+
+                if (canFulfill) {
+                    btnHandIn.setInteractive().on('pointerup', () => {
+                        this.state.crafted[c.itemKey] -= c.req;
+                        this.state.money += c.rewardCash;
+                        this.state.totalQuestsCompleted++;
+                        this.addXP(c.rewardXP);
+
+                        if (this.state.totalQuestsCompleted >= 10) {
+                            this.state.unlockedAutoSort = true;
+                        }
+
+                        this.contracts[idx] = this.generateRandomContract(c.id);
+                        this.requestLayoutRebuild();
+                    });
+                }
+
+                this.mainContainer.add([cardBg, txt, btnHandIn]);
+            });
+        }
+
+        renderWorkshopsUI(w, h, y) {
+            const isMobile = h > w && w < 600;
+            const shops = [
+                {
+                    id: 'green', name: 'GREEN SHOP', color: '#2e7d32', unlocked: this.state.unlockedGreenShop, tier: this.state.upgrades.greenTier.lvl,
+                    costCash: 10, costToken: 10, tokenKey: 'organic', tokenName: 'G', unlockKey: 'unlockedGreenShop',
+                    recipes: [
+                        { name: 'Fertilizer', key: 'fertilizer', req: '5G', costVal: 5, resKey: 'organic', tier: 1 },
+                        { name: 'Biofuel', key: 'biofuel', req: '10G', costVal: 10, resKey: 'organic', tier: 2 },
+                        { name: 'Compost', key: 'compost', req: '15G', costVal: 15, resKey: 'organic', tier: 3 }
+                    ]
+                },
+                {
+                    id: 'blue', name: 'BLUE SHOP', color: '#1565c0', unlocked: this.state.unlockedBlueShop, tier: this.state.upgrades.blueTier.lvl,
+                    costCash: 10, costToken: 10, tokenKey: 'paper', tokenName: 'P', unlockKey: 'unlockedBlueShop',
+                    recipes: [
+                        { name: 'Rec.Paper', key: 'recycled_paper', req: '5P', costVal: 5, resKey: 'paper', tier: 1 },
+                        { name: 'Cardboard', key: 'cardboard', req: '10P', costVal: 10, resKey: 'paper', tier: 2 },
+                        { name: 'Notebook', key: 'notebook', req: '15P', costVal: 15, resKey: 'paper', tier: 3 }
+                    ]
+                },
+                {
+                    id: 'purple', name: 'GLASS SHOP', color: '#6a1b9a', unlocked: this.state.unlockedPurpleShop, tier: this.state.upgrades.purpleTier.lvl,
+                    costCash: 10, costToken: 10, tokenKey: 'glass', tokenName: 'Gl', unlockKey: 'unlockedPurpleShop',
+                    recipes: [
+                        { name: 'Glass Vase', key: 'glass_vase', req: '5Gl', costVal: 5, resKey: 'glass', tier: 1 },
+                        { name: 'Mirror', key: 'mirror', req: '10Gl', costVal: 10, resKey: 'glass', tier: 2 },
+                        { name: 'Lens', key: 'lens', req: '15Gl', costVal: 15, resKey: 'glass', tier: 3 }
+                    ]
+                },
+                {
+                    id: 'yellow', name: 'PLAST SHOP', color: '#f57f17', unlocked: this.state.unlockedYellowShop, tier: this.state.upgrades.yellowTier.lvl,
+                    costCash: 10, costToken: 10, tokenKey: 'plastic', tokenName: 'Pl', unlockKey: 'unlockedYellowShop',
+                    recipes: [
+                        { name: 'Filament', key: 'filament', req: '5Pl', costVal: 5, resKey: 'plastic', tier: 1 },
+                        { name: 'Brick', key: 'plastic_brick', req: '10Pl', costVal: 10, resKey: 'plastic', tier: 2 },
+                        { name: 'Pipe', key: 'pipe', req: '15Pl', costVal: 15, resKey: 'plastic', tier: 3 }
+                    ]
+                }
+            ];
+
+            let boxW, gap, startX;
+
+            if (isMobile) {
+                const sidePadding = 18; gap = 12;
+                boxW = Math.floor((w - (sidePadding * 2) - gap) / 2);
+                startX = sidePadding + (boxW / 2);
+            } else {
+                const maxTotalW = Math.min(w - 40, 850); gap = 18;
+                boxW = Math.floor((maxTotalW - (3 * gap)) / 4);
+                startX = (w - maxTotalW) / 2 + (boxW / 2);
+            }
+
+            const boxH = 95;
+
+            shops.forEach((s, idx) => {
+                let sx, sy;
+                if (isMobile) {
+                    sx = (idx % 2 === 0) ? startX : startX + boxW + gap;
+                    sy = y + (Math.floor(idx / 2) * 105);
+                } else {
+                    sx = startX + (idx * (boxW + gap));
+                    sy = y;
+                }
+
+                const hexCol = Phaser.Display.Color.ValueToColor(s.color).color;
+
+                if (s.unlocked) {
+                    const shopYPos = sy - 20;
+
+                    const box = this.add.graphics();
+                    box.lineStyle(2, hexCol, 1);
+                    box.strokeRect(sx - (boxW/2), shopYPos - 20, boxW, boxH);
+
+                    const header = this.add.graphics();
+                    header.fillStyle(hexCol, 1);
+                    header.fillRect(sx - (boxW/2), shopYPos - 20, boxW, 22);
+
+                    const title = this.add.text(sx, shopYPos - 9, s.name, { fontSize: '13px', style: 'bold', color: '#fff' }).setOrigin(0.5);
+                    this.mainContainer.add([box, header, title]);
+
+                    s.recipes.forEach((r, rIdx) => {
+                        const ry = shopYPos + 12 + (rIdx * 23);
+                        
+                        if (s.tier >= r.tier) {
+                            const ownedCount = this.state.crafted[r.key] || 0;
+                            const canCraft = this.state.resources[r.resKey] >= r.costVal;
+
+                            const label = this.add.text(sx - (boxW/2) + 6, ry, `(${ownedCount}) ${r.name}`, { fontSize: '11px', color: '#fff', style: 'bold' }).setOrigin(0, 0.5);
+                            const btnCraft = this.add.text(sx + (boxW/2) - 6, ry, r.req, {
+                                fontSize: '11px', style: 'bold',
+                                backgroundColor: canCraft ? '#00e676' : '#424242',
+                                color: canCraft ? '#000' : '#aaa', padding: {x: 4, y: 1}
+                            }).setOrigin(1, 0.5);
+
+                            if (canCraft) {
+                                btnCraft.setInteractive().on('pointerup', () => {
+                                    this.state.resources[r.resKey] -= r.costVal;
+                                    this.craftingConveyor.push({ shopId: s.id, recipeKey: r.key, recipeName: r.name });
+                                    this.processCraftingConveyor();
+                                    this.requestLayoutRebuild();
+                                });
+                            }
+                            this.mainContainer.add([label, btnCraft]);
+                        } else {
+                            const lockLabel = this.add.text(sx, ry, `[ Tier ${r.tier} Lock ]`, { fontSize: '10px', color: '#777' }).setOrigin(0.5);
+                            this.mainContainer.add(lockLabel);
+                        }
+                    });
+
+                } else {
+                    const canBuy = this.state.money >= s.costCash && this.state.resources[s.tokenKey] >= s.costToken;
+
+                    const btnBuy = this.add.text(sx, sy - 36, `BUY $${s.costCash} + ${s.costToken}${s.tokenName}`, {
+                        fontSize: '11px', style: 'bold',
+                        backgroundColor: canBuy ? '#00e676' : '#424242',
+                        color: canBuy ? '#000000' : '#aaaaaa', align: 'center', padding: {x: 6, y: 4}
+                    }).setOrigin(0.5).setInteractive();
+
+                    const emptyBox = this.add.graphics();
+                    emptyBox.lineStyle(1.5, 0x444444, 1);
+                    emptyBox.strokeRect(sx - (boxW/2), sy - 18, boxW, boxH);
+
+                    const title = this.add.text(sx, sy + 22, s.name, { fontSize: '12px', style: 'bold', color: '#666' }).setOrigin(0.5);
+
+                    if (canBuy) {
+                        btnBuy.on('pointerdown', () => {
+                            this.state.money -= s.costCash;
+                            this.state.resources[s.tokenKey] -= s.costToken;
+                            this.state[s.unlockKey] = true;
+                            this.requestLayoutRebuild();
+                        });
+                    }
+                    this.mainContainer.add([btnBuy, emptyBox, title]);
+                }
+            });
+        }
+
+        processCraftingConveyor() {
+            if (this.currentCraftJob || this.craftingConveyor.length === 0) return;
+
+            this.currentCraftJob = this.craftingConveyor.shift();
+            this.requestLayoutRebuild();
+
+            this.time.delayedCall(1000, () => {
+                this.state.crafted[this.currentCraftJob.recipeKey]++;
+                this.addXP(10);
+                this.currentCraftJob = null;
+                this.requestLayoutRebuild();
+
+                this.processCraftingConveyor();
+            });
+        }
+
+        renderQuickUpgradesBox(x, y, type) {
+            const box = this.add.container(x, y).setDepth(30);
+            const bg = this.add.graphics();
+            bg.fillStyle(0x1a1a1a, 0.95);
+            bg.fillRect(0, 0, 130, 85);
+            bg.lineStyle(2, 0xffd700, 1);
+            bg.strokeRect(0, 0, 130, 85);
+
+            box.add(bg);
+
+            if (type === 'gate') {
+                const btnFee = this.add.text(10, 12, `+Fee ($${this.state.gateFeeCost})`, { fontSize: '11px', style: 'bold', color: '#00ff00' })
+                    .setInteractive().on('pointerup', () => {
+                        if (this.state.money >= this.state.gateFeeCost) {
+                            this.state.money -= this.state.gateFeeCost;
+                            this.state.g1Fee++;
+                            this.state.gateFeeLvl++;
+                            this.state.gateFeeCost *= 2;
+                            this.requestLayoutRebuild();
+                        }
+                    });
+
+                const btnAuto = this.add.text(10, 45, !this.state.isGateAuto ? `+Auto ($${this.state.gateAutoCost})` : `Speed ($${this.state.gateAutoCost})`, { fontSize: '11px', style: 'bold', color: '#ffd700' })
+                    .setInteractive().on('pointerup', () => {
+                        if (this.state.money >= this.state.gateAutoCost) {
+                            this.state.money -= this.state.gateAutoCost;
+                            if (!this.state.isGateAuto) this.state.isGateAuto = true;
+                            else this.state.autoGateDelay = Math.max(600, this.state.autoGateDelay - 400);
+                            this.state.gateAutoLvl++;
+                            this.state.gateAutoCost *= 2;
+                            this.requestLayoutRebuild();
+                        }
+                    });
+
+                box.add([btnFee, btnAuto]);
+            } else {
+                const btnDbl = this.add.text(10, 12, `Double ($${this.state.tipDoubleCost})`, { fontSize: '11px', style: 'bold', color: '#00ff00' })
+                    .setInteractive().on('pointerup', () => {
+                        if (this.state.money >= this.state.tipDoubleCost && this.state.doubleTrashChance < 0.50) {
+                            this.state.money -= this.state.tipDoubleCost;
+                            this.state.doubleTrashChance += 0.10;
+                            this.state.tipDoubleLvl++;
+                            this.state.tipDoubleCost *= 2;
+                            this.requestLayoutRebuild();
+                        }
+                    });
+
+                const btnAuto = this.add.text(10, 45, !this.state.unlockedAutoQueue ? `+Auto ($${this.state.tipAutoCost})` : `Speed ($${this.state.tipAutoCost})`, { fontSize: '11px', style: 'bold', color: '#ffd700' })
+                    .setInteractive().on('pointerup', () => {
+                        if (this.state.money >= this.state.tipAutoCost) {
+                            this.state.money -= this.state.tipAutoCost;
+                            if (!this.state.unlockedAutoQueue) this.state.unlockedAutoQueue = true;
+                            else this.state.autoQueueSpeed = Math.max(600, this.state.autoQueueSpeed - 400);
+                            this.state.tipAutoLvl++;
+                            this.state.tipAutoCost *= 2;
+                            this.requestLayoutRebuild();
+                        }
+                    });
+
+                box.add([btnDbl, btnAuto]);
+            }
+
+            this.mainContainer.add(box);
+        }
+
+        renderCenteredXPBar(w, y) {
+            const barW = Math.min(w * 0.55, 240);
+            const barH = 20;
+            const bx = (w - barW) / 2;
+
+            const neededXP = this.state.level * 20;
+            const pct = Math.min(1, this.state.xp / neededXP);
+
+            const bgGfx = this.add.graphics();
+            bgGfx.fillStyle(0x222222, 1);
+            bgGfx.fillRect(bx, y, barW, barH);
+            bgGfx.lineStyle(1.5, 0x00ff00, 1);
+            bgGfx.strokeRect(bx, y, barW, barH);
+
+            const fillGfx = this.add.graphics();
+            fillGfx.fillStyle(0x2e7d32, 1);
+            fillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
+
+            const barText = this.add.text(w / 2, y + (barH / 2), `LEVEL ${this.state.level} (${this.state.xp}/${neededXP} XP)`, {
+                fontSize: '11px', style: 'bold', color: '#ffffff'
+            }).setOrigin(0.5);
+
+            this.mainContainer.add([bgGfx, fillGfx, barText]);
+        }
+
+        renderTopHUDBar(w, topBarY, isMobile) {
+            const mins = Math.floor(this.state.sessionSeconds / 60).toString().padStart(2, '0');
+            const secs = (this.state.sessionSeconds % 60).toString().padStart(2, '0');
+
+            const textY = isMobile ? topBarY + 28 : 12;
+
+            this.hudTextObj = this.add.text(14, textY, `WALLET: $${this.state.money}\nTIME: ${mins}:${secs}`, {
+                fontSize: '12px', style: 'bold', color: '#00ff00', fontFamily: 'monospace', lineSpacing: 3
+            });
+
+            this.mainContainer.add(this.hudTextObj);
+        }
+
+        drawAutoGateProgress(progress) {
+            if (!this.autoGateGfx) return;
+            this.autoGateGfx.clear();
+            if (!this.state.isGateAuto) return;
+
+            const cx = this.gatePos.x - 48; const cy = this.gatePos.y + 26;
+            this.autoGateGfx.lineStyle(2, 0x555555, 1);
+            this.autoGateGfx.strokeCircle(cx, cy, 9);
+
+            if (progress > 0) {
+                this.autoGateGfx.lineStyle(3, 0x00ff00, 1);
+                this.autoGateGfx.beginPath();
+                this.autoGateGfx.arc(cx, cy, 9, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + (360 * progress)), false);
+                this.autoGateGfx.strokePath();
+            }
+        }
+
+        drawAutoQueueProgress(progress) {
+            if (!this.autoQueueGfx) return;
+            this.autoQueueGfx.clear();
+            if (!this.state.unlockedAutoQueue) return;
+
+            const cx = this.tipPos.x + 48; const cy = this.tipPos.y + 16;
+            this.autoQueueGfx.lineStyle(2, 0x555555, 1);
+            this.autoQueueGfx.strokeCircle(cx, cy, 9);
+
+            if (progress > 0) {
+                this.autoQueueGfx.lineStyle(3, 0x00e676, 1);
+                this.autoQueueGfx.beginPath();
+                this.autoQueueGfx.arc(cx, cy, 9, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + (360 * progress)), false);
+                this.autoQueueGfx.strokePath();
+            }
+        }
+
+        drawAutoSortProgress(progress) {
+            if (!this.autoSortGfx) return;
+            this.autoSortGfx.clear();
+            if (!this.state.unlockedAutoSort || this.trashQueue.length === 0) return;
+
+            const headX = this.queueStartX; const headY = this.queueY;
+            if (progress > 0) {
+                this.autoSortGfx.lineStyle(3, 0x00e676, 1);
+                this.autoSortGfx.beginPath();
+                this.autoSortGfx.arc(headX, headY, 22, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + (360 * progress)), false);
+                this.autoSortGfx.strokePath();
+            }
+        }
+
+        setupLongPress(sprite, targetType) {
+            sprite.on('pointerdown', (pointer) => {
+                this.isHolding = true;
+                const downTime = pointer.downTime;
+
+                this.pressTimer = this.time.addEvent({
+                    delay: 30,
+                    repeat: 20,
+                    callback: () => {
+                        if (!this.isHolding) return;
+                        const elapsed = this.time.now - downTime;
+
+                        if (elapsed >= 300) {
+                            const progress = (elapsed - 300) / 300;
+                            this.drawLongPressFill(sprite.x, sprite.y, progress);
+                        }
+
+                        if (elapsed >= 600) {
+                            this.clearLongPress();
+                            this.activeUpgradeCategory = targetType;
+                            this.openModal('upgrades');
+                        }
+                    }
+                });
+            });
+
+            sprite.on('pointerup', (pointer) => {
+                const totalHold = this.time.now - pointer.downTime;
+                this.clearLongPress();
+
+                if (totalHold < 500) {
+                    if (targetType === 'gate') this.triggerGate();
+                    else if (targetType === 'tip') this.queueTrashFromTip();
+                }
+            });
+
+            sprite.on('pointerout', () => this.clearLongPress());
+        }
+
+        drawLongPressFill(x, y, progress) {
+            this.longPressGfx.clear();
+            this.longPressGfx.lineStyle(3, 0x00ff00, 1);
+            this.longPressGfx.beginPath();
+            this.longPressGfx.arc(x, y, 35, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + (360 * Math.min(1, progress))), false);
+            this.longPressGfx.strokePath();
+        }
+
+        clearLongPress() {
+            this.isHolding = false;
+            if (this.pressTimer) this.pressTimer.destroy();
+            this.pressTimer = null;
+            if (this.longPressGfx) this.longPressGfx.clear();
+        }
+
+        createTopNavButtons(w) {
+            const btnDecor = this.add.text(w - 14, 12, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#222', padding: { x: 6, y: 4 } })
+                .setOrigin(1, 0).setInteractive().on('pointerup', () => this.openModal('decorations'));
+
+            this.btnUpgrades = this.add.text(w - 14, 40, '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#222', padding: { x: 6, y: 4 } })
+                .setOrigin(1, 0).setInteractive().on('pointerup', () => {
+                    this.activeUpgradeCategory = 'gate';
+                    this.openModal('upgrades');
+                });
+
+            this.mainContainer.add([btnDecor, this.btnUpgrades]);
+        }
+
+        spawnCustomer() {
+            if (this.customerQueue.length >= 6) return;
+            const c = this.add.container(-30, this.scale.height + 30).setDepth(5);
+            c.add([this.add.sprite(0, 0, 'person'), this.add.sprite(10, 5, 'bag')]);
+            this.customerQueue.push(c);
+            this.repositionCustomerQueue();
+        }
+
+        repositionCustomerQueue() {
+            this.customerQueue.forEach((customer, idx) => {
+                this.tweens.add({
+                    targets: customer,
+                    x: this.gatePos.x - (idx * 16),
+                    y: this.gatePos.y + 6 + (idx * 10),
+                    duration: 250
+                });
+            });
+        }
+
+        triggerGate() {
+            if (this.customerQueue.length === 0) return;
+
+            const fee = this.state.g1Fee;
+            const customer = this.customerQueue.shift();
+            this.repositionCustomerQueue();
+
+            this.tweens.add({ targets: customer, alpha: 0, duration: 180, onComplete: () => customer.destroy() });
+
+            const floatCash = this.add.text(this.gatePos.x, this.gatePos.y - 20, `+$${fee}`, { fontSize: '16px', style: 'bold', color: '#00ff00' }).setOrigin(0.5).setDepth(15);
+            this.tweens.add({ targets: floatCash, y: floatCash.y - 35, alpha: 0, duration: 800, onComplete: () => floatCash.destroy() });
+
+            let trashGained = this.state.bagValue;
+            if (Math.random() < this.state.doubleTrashChance) {
+                trashGained *= 2;
+                const fanFare = this.add.text(this.tipPos.x, this.tipPos.y - 30, '+ BONUS!', { fontSize: '14px', style: 'bold', color: '#ffd700' }).setOrigin(0.5).setDepth(15);
+                this.tweens.add({ targets: fanFare, y: fanFare.y - 30, alpha: 0, duration: 900, onComplete: () => fanFare.destroy() });
+            }
+
+            const bag = this.add.sprite(this.gatePos.x, this.gatePos.y, 'bag').setDepth(6);
+            this.tweens.add({
+                targets: bag,
+                x: this.tipPos.x,
+                y: this.tipPos.y,
+                duration: 280,
+                ease: 'Quad.easeOut',
+                onComplete: () => {
+                    bag.destroy();
+                    this.state.money += fee;
+                    this.state.tipStockpile += trashGained;
+                    this.updateUI();
+                }
+            });
+        }
+
+        queueTrashFromTip() {
+            if (this.state.tipStockpile <= 0) return;
+            if (this.trashQueue.length >= this.state.maxTrashQueue) return;
+
+            this.state.tipStockpile -= 1;
+
+            const keys = Object.keys(TRASH_TYPES);
+            const typeKey = keys[Math.floor(Math.random() * keys.length)];
+            const typeData = TRASH_TYPES[typeKey];
+            const itemName = typeData.items[Math.floor(Math.random() * typeData.items.length)];
+
+            const container = this.add.container(this.tipPos.x, this.tipPos.y).setDepth(10);
+            const circle = this.add.circle(0, 0, 16, typeData.color);
+            const text = this.add.text(0, 0, itemName[0], { color: '#000', style: 'bold', fontSize: '12px' }).setOrigin(0.5);
+            container.add([circle, text]);
+
+            this.trashQueue.push({ container, type: typeData.id });
+            this.renderHorizontalQueue();
+            this.updateUI();
+        }
+
+        renderHorizontalQueue() {
+            if (!this.queueCounterText) return;
+            const cap = Math.min(10, this.state.maxTrashQueue);
+            this.queueCounterText.setText(`${this.trashQueue.length}/${cap}`);
+
+            const gap = 34;
+
+            this.trashQueue.forEach((item, index) => {
+                const targetX = this.queueStartX + (index * gap);
+                let itemAlpha = 1;
+                if (index >= 6) itemAlpha = Math.max(0.15, 1 - ((index - 5) * 0.3));
+
+                this.tweens.add({
+                    targets: item.container,
+                    x: targetX,
+                    y: this.queueY,
+                    alpha: itemAlpha,
+                    duration: 100
+                });
+
+                if (index === 0) {
+                    this.queueHighlight.setVisible(true);
+                    this.queueHighlight.setPosition(targetX, this.queueY);
+
+                    item.container.setSize(32, 32);
+                    item.container.setInteractive({ draggable: true });
+                    this.input.setDraggable(item.container);
+
+                    item.container.off('drag');
+                    item.container.off('dragend');
+
+                    item.container.on('drag', (pointer, dragX, dragY) => {
+                        item.container.x = dragX; item.container.y = dragY;
+                    });
+
+                    item.container.on('dragend', () => {
+                        let droppedBin = null;
+                        this.bins.forEach(b => {
+                            if (Phaser.Math.Distance.Between(item.container.x, item.container.y, b.x, b.y) < 40) droppedBin = b;
+                        });
+
+                        if (droppedBin) this.sortHeadTrash(droppedBin.id);
+                        else this.renderHorizontalQueue();
+                    });
+                } else {
+                    if (item.container.input) item.container.disableInteractive();
+                }
+            });
+
+            if (this.trashQueue.length === 0) this.queueHighlight.setVisible(false);
+        }
+
+        sortHeadTrash(targetType) {
+            if (this.trashQueue.length === 0) return;
+
+            this.state.autoSortTimer = 0;
+
+            const item = this.trashQueue.shift();
+            const targetBin = this.bins.find(b => b.id === targetType);
+
+            this.renderHorizontalQueue();
+
+            if (targetBin) {
+                this.tweens.add({
+                    targets: item.container,
+                    x: targetBin.x,
+                    y: targetBin.y,
+                    scale: 0.1,
+                    duration: 90,
+                    onComplete: () => {
+                        item.container.destroy();
+                        if (item.type === targetType) {
+                            this.state.resources[targetType]++;
+                            this.addXP(2);
+                            this.updateCombo(true);
+
+                            const popOne = this.add.text(targetBin.x, targetBin.y - 15, '+1', { fontSize: '18px', style: 'bold', color: '#00ff00' }).setOrigin(0.5).setDepth(20);
+                            this.tweens.add({ targets: popOne, y: popOne.y - 30, alpha: 0, duration: 800, onComplete: () => popOne.destroy() });
+
+                        } else {
+                            this.cameras.main.flash(90, 255, 0, 0);
+                            this.updateCombo(false);
+                        }
+                        this.requestLayoutRebuild();
+                    }
+                });
+            }
+        }
+
+        updateCombo(isCorrect) {
+            this.state.lastSortTime = this.time.now;
+
+            if (isCorrect) {
+                this.state.comboCount++;
+                if (this.state.comboCount % 15 === 0 && this.state.comboCount > 0 && this.state.comboLevel === 3) {
+                    this.triggerDumpsterFireFanfare();
+                }
+            } else {
+                this.state.comboCount = Math.max(0, this.state.comboCount - 5);
+            }
+            this.updateComboDisplay();
+        }
+
+        triggerDumpsterFireFanfare() {
+            const dfText = this.add.text(this.scale.width / 2, this.scale.height / 2, '🔥 DUMPSTER FIRE! 🔥', {
+                fontSize: '28px', style: 'bold', color: '#ff3d00', backgroundColor: '#000', padding: 14
+            }).setOrigin(0.5).setDepth(35);
+
+            this.tweens.add({ targets: dfText, y: dfText.y - 60, alpha: 0, duration: 1800, onComplete: () => dfText.destroy() });
+        }
+
+        updateComboDisplay() {
+            if (this.state.comboCount < 5) this.state.comboLevel = 0;
+            else if (this.state.comboCount < 10) this.state.comboLevel = 1;
+            else if (this.state.comboCount < 15) this.state.comboLevel = 2;
+            else this.state.comboLevel = 3;
+
+            const fireLabels = ['', '🔥', '🔥🔥', '🔥🔥🔥'];
+            if (this.fireText) this.fireText.setText(fireLabels[this.state.comboLevel]);
+        }
+
+        spawnBonusTruck() {
+            const isMobile = this.scale.height > this.scale.width && this.scale.width < 600;
+            const truckY = isMobile ? this.scale.height - 75 : this.scale.height - 45;
+
+            const truck = this.add.sprite(-60, truckY, 'truck').setInteractive().setDepth(20);
+            this.tweens.add({
+                targets: truck,
+                x: this.scale.width + 60,
+                duration: 6000,
+                onComplete: () => truck.destroy()
+            });
+
+            truck.on('pointerdown', () => {
+                this.state.tipStockpile += 10;
+                const pop = this.add.text(truck.x, truck.y - 20, '+10 RUBBISH!', { fontSize: '16px', style: 'bold', color: '#ff6f00' }).setDepth(25);
+                this.tweens.add({ targets: pop, y: pop.y - 40, alpha: 0, duration: 1000, onComplete: () => pop.destroy() });
+                truck.destroy();
+                this.updateUI();
+            });
+        }
+
+        addXP(amount) {
+            this.state.xp += amount;
+            const needed = this.state.level * 20;
+            if (this.state.xp >= needed) {
+                this.state.xp -= needed;
+                this.state.level++;
+
+                const lvlText = this.add.text(this.scale.width / 2, this.scale.height / 2, `🎉 LEVEL UP! (${this.state.level}) 🎉`, {
+                    fontSize: '26px', style: 'bold', color: '#ffd700', backgroundColor: '#000', padding: 14
+                }).setOrigin(0.5).setDepth(30);
+
+                this.tweens.add({ targets: lvlText, scale: 1.3, alpha: 0, duration: 1600, onComplete: () => lvlText.destroy() });
+            }
+        }
+
+        // --- BOTTOM-CUT MODALS (BINS & QUEUE REMAIN FULLY INTERACTIVE) ---
+        openModal(type) {
+            this.activeModal = type;
+            if (this.modalContainer) this.modalContainer.destroy();
+
+            const w = this.scale.width; 
+            const h = this.scale.height;
+            const boxW = Math.min(w * 0.9, 450);
+            const modalH = h * 0.55;
+
+            this.modalContainer = this.add.container(0, 0).setDepth(40);
+
+            const overlay = this.add.graphics();
+            overlay.fillStyle(0x000000, 0.85);
+            overlay.fillRect(0, 0, w, modalH);
+
+            const box = this.add.graphics();
+            box.fillStyle(0x1a1a1a, 1);
+            box.fillRect((w - boxW) / 2, h * 0.02, boxW, modalH - (h * 0.04));
+            box.lineStyle(2, 0x4fc3f7, 1);
+            box.strokeRect((w - boxW) / 2, h * 0.02, boxW, modalH - (h * 0.04));
+
+            const closeX = ((w - boxW) / 2) + boxW - 35;
+            const btnClose = this.add.text(closeX, h * 0.05, ' [X] ', { fontSize: '20px', style: 'bold', color: '#ff5555', padding: 8 })
+                .setOrigin(0.5).setInteractive().on('pointerup', () => {
+                    this.modalContainer.destroy();
+                    this.activeModal = null;
+                });
+
+            this.modalContainer.add([overlay, box, btnClose]);
+
+            if (type === 'upgrades') this.renderCategoryUpgradesModal(w, modalH, boxW);
+            if (type === 'decorations') this.renderDecorationsModal(w, modalH, boxW);
+        }
+
+        renderDecorationsModal(w, modalH, boxW) {
+            const boxLeft = (w - boxW) / 2;
+            const title = this.add.text(w / 2, modalH * 0.12, '🪴 DECORATIONS', { fontSize: '18px', style: 'bold', color: '#a5d6a7' }).setOrigin(0.5);
+            const cashTxt = this.add.text(w / 2, modalH * 0.88, `Current Wallet: $${this.state.money}`, { fontSize: '14px', style: 'bold', color: '#00ff00' }).setOrigin(0.5);
+
+            this.modalContainer.add([title, cashTxt]);
+
+            const decors = [
+                {
+                    name: 'Perimeter Trees', desc: 'Adds green border trees', cost: 25,
+                    bought: this.state.hasTrees, action: () => { this.state.hasTrees = true; }
+                },
+                {
+                    name: 'Festive Bunting', desc: 'Adds colorful flags along top path', cost: 20,
+                    bought: this.state.hasBunting, action: () => { this.state.hasBunting = true; }
+                },
+                {
+                    name: 'Fairy Lights', desc: 'Yellow lights on plant bushes', cost: 40,
+                    bought: this.state.hasFairyLights, req: this.state.hasTrees, reqText: 'Requires Trees', action: () => { this.state.hasFairyLights = true; }
+                },
+                {
+                    name: 'Glass Border Decor', desc: 'Tall colorful diamonds on sides', cost: 30,
+                    bought: this.state.hasGlassDecor, action: () => { this.state.hasGlassDecor = true; }
+                }
+            ];
+
+            decors.forEach((d, idx) => {
+                const dy = modalH * 0.22 + (idx * 55);
+                const infoTxt = this.add.text(boxLeft + 20, dy, `${d.name}\n${d.desc}`, { fontSize: '11px', color: '#fff', lineSpacing: 2 });
+
+                if (d.bought) {
+                    const boughtBadge = this.add.text(boxLeft + boxW - 25, dy + 6, '[ OWNED ]', { fontSize: '11px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
+                    this.modalContainer.add([infoTxt, boughtBadge]);
+                } else if (d.req === false) {
+                    const reqBadge = this.add.text(boxLeft + boxW - 25, dy + 6, `[ ${d.reqText} ]`, { fontSize: '10px', color: '#777' }).setOrigin(1, 0);
+                    this.modalContainer.add([infoTxt, reqBadge]);
+                } else {
+                    const canAfford = this.state.money >= d.cost;
+                    const btn = this.add.text(boxLeft + boxW - 25, dy + 6, `BUY ($${d.cost})`, {
+                        fontSize: '11px', style: 'bold',
+                        backgroundColor: canAfford ? '#00e676' : '#424242',
+                        color: canAfford ? '#000' : '#aaa', padding: 4
+                    }).setOrigin(1, 0);
+
+                    if (canAfford) {
+                        btn.setInteractive().on('pointerup', () => {
+                            this.state.money -= d.cost;
+                            d.action();
+                            this.requestLayoutRebuild();
+                            this.openModal('decorations');
+                        });
+                    }
+                    this.modalContainer.add([infoTxt, btn]);
+                }
+            });
+        }
+
+        renderCategoryUpgradesModal(w, modalH, boxW) {
+            const activeCategories = ['gate', 'tip'];
+            if (this.state.unlockedGreenShop) activeCategories.push('green_shop');
+            if (this.state.unlockedBlueShop) activeCategories.push('blue_shop');
+            if (this.state.unlockedPurpleShop) activeCategories.push('purple_shop');
+            if (this.state.unlockedYellowShop) activeCategories.push('yellow_shop');
+
+            if (!activeCategories.includes(this.activeUpgradeCategory)) {
+                this.activeUpgradeCategory = 'gate';
+            }
+
+            const currIdx = activeCategories.indexOf(this.activeUpgradeCategory);
+            const boxLeft = (w - boxW) / 2;
+
+            let dotsStr = '';
+            activeCategories.forEach((c, idx) => { dotsStr += (idx === currIdx) ? ' ● ' : ' ○ '; });
+            const dotsText = this.add.text(w / 2, modalH * 0.09, dotsStr, { fontSize: '16px', color: '#ffd700' }).setOrigin(0.5);
+
+            const title = this.add.text(w / 2, modalH * 0.16, `${this.activeUpgradeCategory.toUpperCase().replace('_',' ')} UPGRADES`, { fontSize: '16px', style: 'bold', color: '#4fc3f7' }).setOrigin(0.5);
+
+            const bottomCashTxt = this.add.text(w / 2, modalH * 0.88, `Current Wallet: $${this.state.money}`, { fontSize: '14px', style: 'bold', color: '#00ff00' }).setOrigin(0.5);
+
+            const btnLeft = this.add.text(boxLeft + 25, modalH * 0.16, '◄', { fontSize: '20px', style: 'bold', color: '#ffd700' })
+                .setOrigin(0.5).setInteractive().on('pointerup', () => {
+                    const prevIdx = (currIdx - 1 + activeCategories.length) % activeCategories.length;
+                    this.activeUpgradeCategory = activeCategories[prevIdx];
+                    this.openModal('upgrades');
+                });
+
+            const btnRight = this.add.text(boxLeft + boxW - 25, modalH * 0.16, '►', { fontSize: '20px', style: 'bold', color: '#ffd700' })
+                .setOrigin(0.5).setInteractive().on('pointerup', () => {
+                    const nextIdx = (currIdx + 1) % activeCategories.length;
+                    this.activeUpgradeCategory = activeCategories[nextIdx];
+                    this.openModal('upgrades');
+                });
+
+            this.modalContainer.add([dotsText, title, bottomCashTxt, btnLeft, btnRight]);
+
+            let list = [];
+            const u = this.state.upgrades;
+
+            if (this.activeUpgradeCategory === 'gate') {
+                list = [
+                    { key: 'gateFee', name: 'Gate Fee (+$1)', desc: 'Increases cash per customer', cost: this.state.gateFeeCost, lvl: this.state.gateFeeLvl, max: 10, isUnlocked: true, action: () => { this.state.g1Fee++; this.state.gateFeeLvl++; this.state.gateFeeCost *= 2; } },
+                    { key: 'gateSpawn', name: 'Foot Traffic', desc: 'Increases customer spawns', cost: this.state.gateSpawnCost, lvl: this.state.gateSpawnLvl, max: 5, isUnlocked: this.state.gateFeeLvl > 0, lockMsg: '[ Unlock previous tier ]', action: () => { this.state.spawnDelay -= 200; this.state.gateSpawnLvl++; this.state.gateSpawnCost *= 2; } },
+                    { key: 'gateAuto', name: 'Automate Gate', desc: 'Auto-opens gate on timer', cost: this.state.gateAutoCost, lvl: this.state.gateAutoLvl, max: 5, isUnlocked: this.state.gateSpawnLvl > 0, lockMsg: '[ Unlock previous tier ]', action: () => { this.state.isGateAuto = true; this.state.gateAutoLvl++; this.state.gateAutoCost *= 2; } }
+                ];
+            } else if (this.activeUpgradeCategory === 'tip') {
+                const currentDbl = Math.round(this.state.doubleTrashChance * 100);
+                const currentCap = this.state.maxTrashQueue;
+
+                list = [
+                    { key: 'queueCap', name: 'Queue Capacity', desc: `Max Queue: ${currentCap} / 10`, deltaText: '+1 Cap', cost: u.queueCap.cost, lvl: u.queueCap.lvl, max: u.queueCap.max, isUnlocked: true, action: () => { this.state.maxTrashQueue = 1 + u.queueCap.lvl + 1; u.queueCap.lvl++; u.queueCap.cost *= 2; } },
+                    { key: 'doubleTrash', name: 'Chance for Double Rubbish', desc: `${currentDbl}% chance of double rubbish`, deltaText: '+10%', cost: this.state.tipDoubleCost, lvl: this.state.tipDoubleLvl, max: 5, isUnlocked: u.queueCap.lvl > 0, lockMsg: '[ Unlock previous tier ]', action: () => { this.state.doubleTrashChance += 0.10; this.state.tipDoubleLvl++; this.state.tipDoubleCost *= 2; } },
+                    { key: 'autoQueue', name: 'Auto-Queue Feeder', desc: 'Auto-draws trash from Tip', cost: this.state.tipAutoCost, lvl: this.state.tipAutoLvl, max: 5, isUnlocked: this.state.tipDoubleLvl > 0, lockMsg: '[ Unlock previous tier ]', action: () => { this.state.unlockedAutoQueue = true; this.state.tipAutoLvl++; this.state.tipAutoCost *= 2; } }
+                ];
+            } else {
+                const shopKey = this.activeUpgradeCategory.split('_')[0] + 'Tier';
+                const shopObj = u[shopKey];
+
+                list = [
+                    { key: shopKey, name: `Unlock Tier ${shopObj.lvl + 1} Recipes`, desc: `Expands shop to craft Tier ${shopObj.lvl + 1} items`, cost: shopObj.cost, lvl: shopObj.lvl - 1, max: 2, isUnlocked: shopObj.lvl < 3, lockMsg: '[ ALL RECIPES UNLOCKED ]', action: () => { shopObj.lvl++; shopObj.cost *= 2; } }
+                ];
+            }
+
+            const startY = modalH * 0.28;
+            const rowGap = 58;
+
+            list.forEach((item, idx) => {
+                const uy = startY + (idx * rowGap);
+
+                if (!item.isUnlocked) {
+                    const lockTxt = this.add.text(w / 2, uy + 10, item.lockMsg, { fontSize: '12px', style: 'bold', color: '#777' }).setOrigin(0.5);
+                    this.modalContainer.add(lockTxt);
+
+                } else {
+                    const infoTxt = this.add.text(boxLeft + 20, uy, `${item.name}\n${item.desc}`, { fontSize: '11px', color: '#fff', lineSpacing: 3 });
+
+                    if (item.lvl >= item.max) {
+                        const maxTxt = this.add.text(boxLeft + boxW - 25, uy + 6, '[ MAX ]', { fontSize: '12px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
+                        this.modalContainer.add([infoTxt, maxTxt]);
+                    } else {
+                        const canAfford = this.state.money >= item.cost;
+                        const countText = this.add.text(boxLeft + boxW - 25, uy + 2, `(${item.lvl}/${item.max})`, { fontSize: '10px', color: '#aaa' }).setOrigin(1, 0);
+
+                        const btn = this.add.text(boxLeft + boxW - 25, uy + 18, `BUY ($${item.cost})`, {
+                            fontSize: '11px', style: 'bold',
+                            backgroundColor: canAfford ? '#00e676' : '#424242',
+                            color: canAfford ? '#000000' : '#aaaaaa', padding: 5
+                        }).setOrigin(1, 0);
+
+                        if (canAfford) {
+                            btn.setInteractive().on('pointerup', () => {
+                                this.state.money -= item.cost;
+                                item.action();
+                                this.requestLayoutRebuild();
+                                this.openModal('upgrades');
+                            });
+                        }
+                        this.modalContainer.add([infoTxt, countText, btn]);
+                    }
+                }
+            });
+        }
+
+        updateUI() {
+            if (this.hudTextObj) {
+                const mins = Math.floor(this.state.sessionSeconds / 60).toString().padStart(2, '0');
+                const secs = (this.state.sessionSeconds % 60).toString().padStart(2, '0');
+                this.hudTextObj.setText(`WALLET: $${this.state.money}\nTIME: ${mins}:${secs}`);
+            }
+
+            if (this.tipStockText) {
+                this.tipStockText.setText(`${this.state.tipStockpile}`);
+            }
+
+            if (this.bins) {
+                const counts = [this.state.resources.organic, this.state.resources.paper, this.state.resources.glass, this.state.resources.plastic];
+                this.bins.forEach((b, idx) => {
+                    if (b.countText) b.countText.setText(`${counts[idx]}`);
+                });
+            }
+
+            if (this.tipSprite) {
+                if (this.state.tipStockpile === 0) {
+                    this.tipSprite.setAlpha(0);
+                } else {
+                    this.tipSprite.setAlpha(1);
+                    if (this.state.tipStockpile < 3) this.tipSprite.setTint(0xff1744);
+                    else if (this.state.tipStockpile < 10) this.tipSprite.setTint(0xff9100);
+                    else this.tipSprite.clearTint();
+                }
+            }
+        }
+    }
+
+    const config = {
+        type: Phaser.AUTO,
+        parent: 'game-container',
+        scale: {
+            mode: Phaser.Scale.RESIZE,
+            autoCenter: Phaser.Scale.CENTER_BOTH,
+            width: '100%',
+            height: '100%'
+        },
+        scene: [MainScene]
+    };
+
+    const game = new Phaser.Game(config);
+    </script>
+</body>
+</html>
