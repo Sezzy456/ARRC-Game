@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>ARRC Trash Tycoon - Progression & Tutorial</title>
-    <script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"></script>
+    <script src="phaser.min.js"></script>
+    <script>if (typeof Phaser === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"><\/script>'); }</script>
     <style>
         * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; box-sizing: border-box; }
         html, body { margin: 0; padding: 0; width: 100vw; height: 100vh; background-color: #121212; overflow: hidden; display: flex; justify-content: center; align-items: center; font-family: system-ui, -apple-system, sans-serif; }
@@ -43,7 +44,7 @@
 
     const TRASH_TYPES = {
         organic: { id: 'organic', name: 'Green', color: 0x4caf50, colorHex: '#4caf50', key: '1', items: ['Apple', 'Banana'], sprites: ['rubbish_green_apple', 'rubbish_green_banana'] },
-        paper:   { id: 'paper',   name: 'Blue/Paper', color: 0x2196f3, colorHex: '#2196f3', key: '2', items: ['Box', 'Carton', 'Newspaper'], sprites: ['rubbish_paper_box', 'rubbish_paper_carton', 'rubbish_paper_news'] },
+        paper:   { id: 'paper',   name: 'Paper', color: 0x2196f3, colorHex: '#2196f3', key: '2', items: ['Box', 'Carton', 'Newspaper'], sprites: ['rubbish_paper_box', 'rubbish_paper_carton', 'rubbish_paper_news'] },
         glass:   { id: 'glass',   name: 'Glass', color: 0x9c27b0, colorHex: '#9c27b0', key: '3', items: ['Bottle'], sprites: ['rubbish_glass_bottle'] },
         plastic: { id: 'plastic', name: 'Yellow/Plastic', color: 0xffeb3b, colorHex: '#ffeb3b', key: '4', items: ['Cup'], sprites: ['rubbish_plastic_cup'] }
     };
@@ -102,7 +103,7 @@
                     queueCap: { lvl: 0, max: 9, cost: 2, reqLvl: 1 },
                     doubleToken: { lvl: 0, max: 5, cost: 8, reqLvl: 2 },
                     autoQueue: { lvl: 0, max: 5, cost: 5, reqLvl: 2 },
-                    sanitiser: { lvl: 0, max: 1, cost: 15, reqLvl: 3 },
+                    sanitiser: { lvl: 0, max: 1, cost: 5, reqLvl: 3 },
                     autoSort: { lvl: 0, max: 5, cost: 15, reqLvl: 4 }
                 },
 
@@ -204,17 +205,14 @@
                     this.state.sessionSeconds++;
                     if (this.state.sanitiserCooldown > 0) {
                         this.state.sanitiserCooldown = Math.max(0, this.state.sanitiserCooldown - 1000);
-                        if (this.btnSanitiser && this.btnSanitiser.active) {
-                            const cdSecs = Math.ceil(this.state.sanitiserCooldown / 1000);
-                            this.btnSanitiser.setText(cdSecs > 0 ? ('🧪 SAN\n(' + cdSecs + 's)') : '🧪\nSAN');
-                        }
                     }
+                    this.updateSanitiserBtnUI();
                     this.updateUI();
                 },
                 loop: true
             });
 
-            // Keyboard Shortcuts: 1-4 for bins, Space for Tip, C for Gate, V for Sanitise
+            // Keyboard Shortcuts: 1-4 for bins, Space for Tip, C for Gate, V for Sanitise, B for Bus Rush
             this.input.keyboard.on('keydown', (e) => {
                 if (['1','2','3','4'].includes(e.key)) {
                     const typeMap = { '1': 'organic', '2': 'paper', '3': 'glass', '4': 'plastic' };
@@ -228,6 +226,8 @@
                     this.triggerGate();
                 } else if (e.code === 'KeyV') {
                     this.triggerSanitiseAction();
+                } else if (e.code === 'KeyB') {
+                    this.cashInActiveBus();
                 }
             });
 
@@ -396,6 +396,16 @@
             this.requestLayoutRebuild();
         }
 
+        updateSanitiserBtnUI() {
+            if (!this.btnSanitiser || !this.btnSanitiser.active) return;
+            const cdSecs = Math.ceil(this.state.sanitiserCooldown / 1000);
+            this.btnSanitiser.setText(cdSecs > 0 ? ('🧪 SAN\n(' + cdSecs + 's)') : '🧪\nSAN');
+            this.btnSanitiser.setStyle({
+                backgroundColor: cdSecs > 0 ? '#424242' : '#2e7d32',
+                color: cdSecs > 0 ? '#aaaaaa' : '#ffffff'
+            });
+        }
+
         triggerSanitiseAction() {
             if (!this.state.unlockedSanitiser || this.state.sanitiserCooldown > 0 || this.trashQueue.length === 0) return;
             const headItem = this.trashQueue[0];
@@ -412,7 +422,14 @@
 
                 // Set 5-second cooldown
                 this.state.sanitiserCooldown = 5000;
+                this.updateSanitiserBtnUI();
                 this.renderHorizontalQueue();
+            }
+        }
+
+        cashInActiveBus() {
+            if (this.activeBusContainer && this.activeBusContainer.active && this.activeBusContainer.cashInHandler) {
+                this.activeBusContainer.cashInHandler();
             }
         }
 
@@ -426,7 +443,7 @@
         }
 
         triggerTutorialStepFanfare(stepNumber) {
-            const fanfareText = this.add.text(this.scale.width / 2, this.scale.height / 2 - 40, `🎉 TUTORIAL STEP ${stepNumber} COMPLETE! 🎉`, {
+            const fanfareText = this.add.text(this.scale.width / 2, this.scale.height / 2 - 40, '🎉 TUTORIAL STEP ' + stepNumber + ' COMPLETE! 🎉', {
                 fontSize: '22px', style: 'bold', color: '#ffd700', backgroundColor: '#000000', padding: 14
             }).setOrigin(0.5).setDepth(60);
 
@@ -445,10 +462,12 @@
         }
 
         triggerBusRushEvent() {
+            if (this.activeBusContainer && this.activeBusContainer.active) return;
             const w = this.scale.width;
             const y = this.gatePos ? this.gatePos.y + 20 : 620;
 
             const busContainer = this.add.container(-110, y).setDepth(15);
+            this.activeBusContainer = busContainer;
             
             const busGfx = this.add.graphics();
             busGfx.fillStyle(0xff6f00, 1);
@@ -456,7 +475,7 @@
             busGfx.lineStyle(3, 0xffeb3b, 1);
             busGfx.strokeRect(0, 0, 100, 32);
 
-            const labelText = this.add.text(50, 16, '🚌 BUS (TAP +10)', {
+            const labelText = this.add.text(50, 16, '🚌 BUS (B/+10)', {
                 fontSize: '10px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
@@ -466,7 +485,7 @@
 
             let busClicked = false;
 
-            busContainer.on('pointerup', () => {
+            const handleCashIn = () => {
                 if (busClicked) return;
                 busClicked = true;
 
@@ -491,13 +510,20 @@
                         scale: 0.2,
                         alpha: 0,
                         duration: 250,
-                        onComplete: () => busContainer.destroy()
+                        onComplete: () => {
+                            busContainer.destroy();
+                            this.activeBusContainer = null;
+                        }
                     });
                 } else {
                     floatTxt.destroy();
                     busContainer.destroy();
+                    this.activeBusContainer = null;
                 }
-            });
+            };
+
+            busContainer.cashInHandler = handleCashIn;
+            busContainer.on('pointerup', handleCashIn);
 
             // Bus moves slowly across screen over 9 seconds (9000ms)
             if (this.tweens && this.tweens.add) {
@@ -507,18 +533,97 @@
                     duration: 9000,
                     onComplete: () => {
                         if (busContainer && busContainer.active) busContainer.destroy();
+                        this.activeBusContainer = null;
                     }
                 });
             }
         }
 
+        getQuestPoolForTier(tier) {
+            const poolTier0 = [
+                { id_base: 't0_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 5, rewardCash: 5, color: '#4caf50' },
+                { id_base: 't0_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 5, rewardCash: 5, color: '#2196f3' },
+                { id_base: 't0_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 5, rewardCash: 5, color: '#9c27b0' },
+                { id_base: 't0_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 5, rewardCash: 5, color: '#ffeb3b' }
+            ];
+
+            const poolTier1 = [
+                { id_base: 't1_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 10, rewardCash: 15, color: '#4caf50' },
+                { id_base: 't1_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 10, rewardCash: 15, color: '#2196f3' },
+                { id_base: 't1_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 10, rewardCash: 15, color: '#9c27b0' },
+                { id_base: 't1_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 10, rewardCash: 15, color: '#ffeb3b' },
+                { id_base: 't1_fer', itemKey: 'fertilizer', name: 'Fertilizer', isResource: false, req: 2, rewardCash: 25, color: '#81c784' },
+                { id_base: 't1_rpap', itemKey: 'recycled_paper', name: 'Rec. Paper', isResource: false, req: 2, rewardCash: 30, color: '#64b5f6' },
+                { id_base: 't1_vas', itemKey: 'glass_vase', name: 'Glass Vase', isResource: false, req: 2, rewardCash: 30, color: '#ba68c8' },
+                { id_base: 't1_fil', itemKey: 'filament', name: '3D Filament', isResource: false, req: 2, rewardCash: 30, color: '#ffd54f' }
+            ];
+
+            const poolTier2 = [
+                { id_base: 't2_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 15, rewardCash: 35, color: '#4caf50' },
+                { id_base: 't2_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 15, rewardCash: 35, color: '#2196f3' },
+                { id_base: 't2_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 18, rewardCash: 45, color: '#9c27b0' },
+                { id_base: 't2_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 18, rewardCash: 45, color: '#ffeb3b' },
+                { id_base: 't2_bio', itemKey: 'biofuel', name: 'Biofuel', isResource: false, req: 2, rewardCash: 60, color: '#81c784' },
+                { id_base: 't2_car', itemKey: 'cardboard', name: 'Cardboard', isResource: false, req: 2, rewardCash: 70, color: '#64b5f6' },
+                { id_base: 't2_mir', itemKey: 'mirror', name: 'Mirror', isResource: false, req: 2, rewardCash: 70, color: '#ba68c8' },
+                { id_base: 't2_bri', itemKey: 'plastic_brick', name: 'Plastic Brick', isResource: false, req: 2, rewardCash: 70, color: '#ffd54f' },
+                { id_base: 't2_fer', itemKey: 'fertilizer', name: 'Fertilizer', isResource: false, req: 3, rewardCash: 40, color: '#81c784' },
+                { id_base: 't2_rpap', itemKey: 'recycled_paper', name: 'Rec. Paper', isResource: false, req: 3, rewardCash: 45, color: '#64b5f6' },
+                { id_base: 't2_vas', itemKey: 'glass_vase', name: 'Glass Vase', isResource: false, req: 3, rewardCash: 45, color: '#ba68c8' },
+                { id_base: 't2_fil', itemKey: 'filament', name: '3D Filament', isResource: false, req: 3, rewardCash: 45, color: '#ffd54f' }
+            ];
+
+            const poolTier3 = [
+                { id_base: 't3_com', itemKey: 'compost', name: 'Compost', isResource: false, req: 3, rewardCash: 120, color: '#81c784' },
+                { id_base: 't3_not', itemKey: 'notebook', name: 'Notebook', isResource: false, req: 3, rewardCash: 130, color: '#64b5f6' },
+                { id_base: 't3_len', itemKey: 'lens', name: 'Lens', isResource: false, req: 3, rewardCash: 140, color: '#ba68c8' },
+                { id_base: 't3_pip', itemKey: 'pipe', name: 'Pipe', isResource: false, req: 3, rewardCash: 150, color: '#ffd54f' },
+                { id_base: 't3_bio', itemKey: 'biofuel', name: 'Biofuel', isResource: false, req: 3, rewardCash: 90, color: '#81c784' },
+                { id_base: 't3_car', itemKey: 'cardboard', name: 'Cardboard', isResource: false, req: 3, rewardCash: 100, color: '#64b5f6' },
+                { id_base: 't3_mir', itemKey: 'mirror', name: 'Mirror', isResource: false, req: 3, rewardCash: 105, color: '#ba68c8' },
+                { id_base: 't3_bri', itemKey: 'plastic_brick', name: 'Plastic Brick', isResource: false, req: 3, rewardCash: 105, color: '#ffd54f' },
+                { id_base: 't3_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 20, rewardCash: 50, color: '#4caf50' },
+                { id_base: 't3_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 20, rewardCash: 50, color: '#2196f3' },
+                { id_base: 't3_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 20, rewardCash: 60, color: '#9c27b0' },
+                { id_base: 't3_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 20, rewardCash: 60, color: '#ffeb3b' }
+            ];
+
+            return (tier === 0) ? poolTier0 : (tier === 1) ? poolTier1 : (tier === 2) ? poolTier2 : poolTier3;
+        }
+
+        createQuestObject(template) {
+            const uniqueId = template.id_base + '_' + Date.now() + '_' + Math.floor(Math.random()*1000);
+            return {
+                id: uniqueId,
+                itemKey: template.itemKey,
+                name: template.name,
+                isResource: template.isResource,
+                req: template.req,
+                rewardCash: template.rewardCash,
+                rewardTokens: 1,
+                color: template.color
+            };
+        }
+
+        replaceQuestSlot(slotIndex) {
+            const pool = this.getQuestPoolForTier(this.state.questTier);
+            const activeKeys = this.contracts
+                .filter((c, idx) => idx !== slotIndex && c && c.itemKey)
+                .map(c => c.itemKey);
+
+            let candidates = pool.filter(template => !activeKeys.includes(template.itemKey));
+            if (candidates.length === 0) candidates = pool;
+
+            const template = candidates[Math.floor(Math.random() * candidates.length)];
+            this.contracts[slotIndex] = this.createQuestObject(template);
+        }
+
         generateQuests() {
             if (this.state.tutorial.active && this.state.tutorial.step > 0) {
-                this.contracts = [];
                 const step = this.state.tutorial.step;
 
                 if (step === 1) {
-                    this.contracts.push({
+                    this.contracts = [{
                         id: 'tut_1', name: 'Look through rubbish', req: 1, currentVal: this.state.tutorial.tipTapped,
                         rewardCash: 5, rewardTokens: 0, color: '#4fc3f7', isTutorial: true,
                         onComplete: () => {
@@ -527,9 +632,9 @@
                             this.generateQuests();
                             this.requestLayoutRebuild();
                         }
-                    });
+                    }];
                 } else if (step === 2) {
-                    this.contracts.push({
+                    this.contracts = [{
                         id: 'tut_2', name: 'Sort rubbish correctly', req: 5, currentVal: this.state.tutorial.sortProgress,
                         rewardCash: 10, rewardTokens: 0, color: '#00e676', isTutorial: true,
                         onComplete: () => {
@@ -538,9 +643,9 @@
                             this.generateQuests();
                             this.requestLayoutRebuild();
                         }
-                    });
+                    }];
                 } else if (step === 3) {
-                    this.contracts.push({
+                    this.contracts = [{
                         id: 'tut_3', name: 'Get paid at Gate', req: 5, currentVal: this.state.tutorial.gateProgress,
                         rewardCash: 15, rewardTokens: 0, color: '#ffb74d', isTutorial: true,
                         onComplete: () => {
@@ -549,10 +654,10 @@
                             this.generateQuests();
                             this.requestLayoutRebuild();
                         }
-                    });
+                    }];
                 } else if (step === 4) {
                     const queueCount = this.trashQueue.length;
-                    this.contracts.push({
+                    this.contracts = [{
                         id: 'tut_4b', name: 'Fill 3 Queue Items', req: 3, currentVal: queueCount,
                         rewardCash: 10, rewardTokens: 0, color: '#4fc3f7', isTutorial: true,
                         onComplete: () => {
@@ -561,78 +666,48 @@
                             this.generateQuests();
                             this.requestLayoutRebuild();
                         }
-                    });
+                    }];
                 } else if (step === 5) {
-                    this.contracts.push({
-                        id: 'tut_5a', name: 'Complete a quest', req: 1, currentVal: this.state.tutorial.questCompletedCount,
-                        rewardCash: 15, rewardTokens: 0, color: '#ffd700', isTutorial: true,
-                        onComplete: () => {
-                            this.triggerTutorialStepFanfare(5);
-                            this.state.tutorial.step = 0;
-                            this.state.tutorial.active = false;
-                            this.generateQuests();
-                            this.requestLayoutRebuild();
-                        }
-                    });
+                    if (this.contracts.length === 0 || !this.contracts.some(c => c && c.id === 'tut_5a')) {
+                        this.contracts = [{
+                            id: 'tut_5a', name: 'Complete a quest', req: 1, currentVal: this.state.tutorial.questCompletedCount,
+                            rewardCash: 15, rewardTokens: 0, color: '#ffd700', isTutorial: true,
+                            onComplete: () => {
+                                this.triggerTutorialStepFanfare(5);
+                                this.state.tutorial.step = 0;
+                                this.state.tutorial.active = false;
+                                this.replaceQuestSlot(0);
+                                this.requestLayoutRebuild();
+                            }
+                        }];
 
-                    const allTypes = ['organic', 'paper', 'glass', 'plastic'].sort(() => 0.5 - Math.random());
-                    for (let i = 0; i < 2; i++) {
-                        const t = allTypes[i];
-                        const amount = Math.floor(Math.random() * 3) + 4;
-                        this.contracts.push({
-                            id: `tut_t0_${i}`, itemKey: t, name: `${TRASH_TYPES[t].name} Tokens`,
-                            isResource: true, req: amount, rewardTokens: 0, rewardCash: 5, color: TRASH_TYPES[t].colorHex
-                        });
+                        const allTypes = ['organic', 'paper', 'glass', 'plastic'].sort(() => 0.5 - Math.random());
+                        for (let i = 0; i < 2; i++) {
+                            const t = allTypes[i];
+                            const amount = Math.floor(Math.random() * 3) + 4;
+                            this.contracts.push({
+                                id: 'tut_t0_' + i, itemKey: t, name: TRASH_TYPES[t].name + ' Tokens',
+                                isResource: true, req: amount, rewardTokens: 0, rewardCash: 5, color: TRASH_TYPES[t].colorHex
+                            });
+                        }
+                    } else {
+                        if (this.contracts[0] && this.contracts[0].id === 'tut_5a') {
+                            this.contracts[0].currentVal = this.state.tutorial.questCompletedCount;
+                        }
                     }
                 }
                 return;
             }
 
-            // Progression Quests: MAINTAIN EXACTLY 3 QUESTS AT ALL TIMES
-            const tier = this.state.questTier;
+            // Progression Quests: MAINTAIN EXACTLY 3 FIXED QUEST SLOTS
+            if (this.contracts.some(c => c && c.isTutorial)) {
+                this.contracts = [];
+            }
 
-            const poolTier0 = [
-                { id_base: 't0_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 5, rewardCash: 5, color: '#4caf50' },
-                { id_base: 't0_pap', itemKey: 'paper', name: 'Blue Tokens', isResource: true, req: 5, rewardCash: 5, color: '#2196f3' },
-                { id_base: 't0_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 5, rewardCash: 5, color: '#9c27b0' },
-                { id_base: 't0_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 5, rewardCash: 5, color: '#ffeb3b' }
-            ];
-
-            const poolTier1 = [
-                { id_base: 't1_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 10, rewardCash: 15, color: '#4caf50' },
-                { id_base: 't1_fer', itemKey: 'fertilizer', name: 'Fertilizer', isResource: false, req: 2, rewardCash: 25, color: '#81c784' },
-                { id_base: 't1_pap', itemKey: 'recycled_paper', name: 'Rec. Paper', isResource: false, req: 2, rewardCash: 30, color: '#64b5f6' }
-            ];
-
-            const poolTier2 = [
-                { id_base: 't2_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 18, rewardCash: 45, color: '#9c27b0' },
-                { id_base: 't2_bio', itemKey: 'biofuel', name: 'Biofuel', isResource: false, req: 2, rewardCash: 60, color: '#81c784' },
-                { id_base: 't2_car', itemKey: 'cardboard', name: 'Cardboard', isResource: false, req: 2, rewardCash: 70, color: '#64b5f6' }
-            ];
-
-            const poolTier3 = [
-                { id_base: 't3_com', itemKey: 'compost', name: 'Compost', isResource: false, req: 3, rewardCash: 120, color: '#81c784' },
-                { id_base: 't3_mir', itemKey: 'mirror', name: 'Mirror', isResource: false, req: 3, rewardCash: 140, color: '#ba68c8' },
-                { id_base: 't3_fil', itemKey: 'filament', name: '3D Filament', isResource: false, req: 4, rewardCash: 180, color: '#ffd54f' }
-            ];
-
-            const activePool = (tier === 0) ? poolTier0 : (tier === 1) ? poolTier1 : (tier === 2) ? poolTier2 : poolTier3;
-
-            // Fill missing slots up to EXACTLY 3 quests
-            let uniqueIdCounter = Date.now();
             while (this.contracts.length < 3) {
-                const template = activePool[Math.floor(Math.random() * activePool.length)];
-                const questId = `${template.id_base}_${uniqueIdCounter++}`;
-                this.contracts.push({
-                    id: questId,
-                    itemKey: template.itemKey,
-                    name: template.name,
-                    isResource: template.isResource,
-                    req: template.req,
-                    rewardCash: template.rewardCash,
-                    rewardTokens: 1, // EVERY NON-TUTORIAL QUEST REWARDS EXACTLY 1 QUEST TOKEN
-                    color: template.color
-                });
+                const nextIdx = this.contracts.length;
+                this.contracts.push(null);
+                this.replaceQuestSlot(nextIdx);
             }
         }
 
@@ -678,9 +753,13 @@
             this.createTopNavButtons(width);
 
             // 1. QUESTS BOARD
-            const questTitle = this.state.tutorial.active ? `📜 TUTORIAL QUESTS 📜` : `📜 QUESTS (Tier ${this.state.questTier}) 📜`;
-            const questHeader = this.add.text(width / 2, questY - 38, questTitle, { fontSize: '14px', style: 'bold', color: '#ffca28' }).setOrigin(0.5);
-            this.mainContainer.add(questHeader);
+            const questTitle = this.state.tutorial.active ? '📜 TUTORIAL QUESTS 📜' : ('📜 QUESTS (Tier ' + this.state.questTier + ') 📜');
+            const questHeader = this.add.text(width / 2 - 80, questY - 38, questTitle, { fontSize: '14px', style: 'bold', color: '#ffca28' }).setOrigin(0.5);
+            const tokenBadge = this.add.text(width / 2 + 95, questY - 38, '🎟️ ' + this.state.questTokens + ' QUEST TOKENS', {
+                fontSize: '12.5px', style: 'bold', color: '#ffd700', backgroundColor: '#1e293b', padding: { x: 8, y: 4 }
+            }).setOrigin(0.5);
+
+            this.mainContainer.add([questHeader, tokenBadge]);
             this.renderContractsUI(width, questY);
 
             // 2. WORKSHOPS
@@ -715,12 +794,12 @@
                 this.openModal('upgrades', 'tip');
             });
 
-            // SANITISER BUTTON: Square-shaped button positioned higher up above head item (queueY - 50)
+            // SANITISER BUTTON: Square-shaped button positioned higher up above head item (queueY - 68)
             if (this.state.unlockedSanitiser && this.trashQueue.length > 0) {
                 const cdSecs = Math.ceil(this.state.sanitiserCooldown / 1000);
                 const btnLabel = cdSecs > 0 ? ('🧪 SAN\n(' + cdSecs + 's)') : '🧪\nSAN';
 
-                this.btnSanitiser = this.add.text(startBinX, queueY - 50, btnLabel, {
+                this.btnSanitiser = this.add.text(startBinX, queueY - 68, btnLabel, {
                     fontSize: '11px', style: 'bold', align: 'center',
                     backgroundColor: cdSecs > 0 ? '#424242' : '#2e7d32',
                     color: cdSecs > 0 ? '#aaaaaa' : '#ffffff', padding: { x: 10, y: 8 }
@@ -738,7 +817,7 @@
             this.bins = [];
             const binData = [
                 { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', count: this.state.resources.organic },
-                { id: 'paper', key: '2', name: 'BLUE', sprite: 'bin_blue', count: this.state.resources.paper },
+                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', count: this.state.resources.paper },
                 { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', count: this.state.resources.glass },
                 { id: 'plastic', key: '4', name: 'PLAST', sprite: 'bin_yellow', count: this.state.resources.plastic }
             ];
@@ -962,6 +1041,7 @@
             const startX = (w - (this.contracts.length * cardW + (this.contracts.length - 1) * gap)) / 2 + (cardW / 2);
 
             this.contracts.forEach((c, idx) => {
+                if (!c) return;
                 const cx = startX + (idx * (cardW + gap));
 
                 if (c.isTutorial) {
@@ -972,25 +1052,26 @@
                     cardBg.lineStyle(2, isDone ? 0x00e676 : 0xffd700, 1);
                     cardBg.strokeRect(cx - (cardW/2), y - 24, cardW, cardH);
 
-                    const txt = this.add.text(cx, y - 4, `${c.name}
-Progress: (${c.currentVal}/${c.req})`, {
+                    const txt = this.add.text(cx, y - 4, c.name + '\nProgress: (' + c.currentVal + '/' + c.req + ')', {
                         fontSize: '10.5px', style: 'bold', color: c.color || '#ffffff', align: 'center', wordWrap: { width: cardW - 8 }
                     }).setOrigin(0.5);
 
-                    const btnText = isDone ? '[ COMPLETE ]' : `(${c.currentVal}/${c.req})`;
+                    const btnText = isDone ? '[ COMPLETE ]' : ('(' + c.currentVal + '/' + c.req + ')');
                     const btnStatus = this.add.text(cx, y + 24, btnText, {
                         fontSize: '9.5px', style: 'bold',
                         backgroundColor: isDone ? '#00e676' : '#334155',
                         color: isDone ? '#000' : '#ffd700', padding: {x: 5, y: 2}
                     }).setOrigin(0.5);
 
+                    const cardHitZone = this.add.zone(cx, y + 13, cardW, cardH).setOrigin(0.5);
+
                     if (isDone) {
-                        btnStatus.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                        cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
                             if (c.onComplete) c.onComplete();
                         });
                     }
 
-                    this.mainContainer.add([cardBg, txt, btnStatus]);
+                    this.mainContainer.add([cardBg, txt, btnStatus, cardHitZone]);
                 } else {
                     const current = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
                     const canFulfill = current >= c.req;
@@ -1002,33 +1083,25 @@ Progress: (${c.currentVal}/${c.req})`, {
                     cardBg.lineStyle(2, outlineColor, 1);
                     cardBg.strokeRect(cx - (cardW/2), y - 24, cardW, cardH);
 
-                    const txt = this.add.text(cx, y - 4, `${c.req} ${c.name}
-(+$${c.rewardCash} | +${c.rewardTokens} Tkn)`, {
+                    const txt = this.add.text(cx, y - 4, c.req + ' ' + c.name + '\n(+$' + c.rewardCash + ' | +' + c.rewardTokens + ' Tkn)', {
                         fontSize: '10.5px', style: 'bold', color: c.color, align: 'center', wordWrap: { width: cardW - 8 }
                     }).setOrigin(0.5);
                     
-                    const btnHandIn = this.add.text(cx, y + 24, canFulfill ? '[ TURN IN ]' : `(${current}/${c.req})`, {
+                    const btnHandIn = this.add.text(cx, y + 24, canFulfill ? '[ TURN IN ]' : ('(' + current + '/' + c.req + ')'), {
                         fontSize: '10px', style: 'bold', backgroundColor: canFulfill ? '#00e676' : '#424242', color: canFulfill ? '#000' : '#aaa', padding: {x: 5, y: 2}
                     }).setOrigin(0.5);
 
+                    const cardHitZone = this.add.zone(cx, y + 13, cardW, cardH).setOrigin(0.5);
+
                     if (canFulfill) {
-                        btnHandIn.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                        cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
                             if (c.isResource) this.state.resources[c.itemKey] -= c.req;
                             else this.state.crafted[c.itemKey] -= c.req;
 
                             this.state.money += c.rewardCash;
                             if (c.rewardTokens) this.state.questTokens += c.rewardTokens;
                             this.state.totalQuestsCompleted++;
-
-                            // Remove fulfilled quest
-                            this.contracts = this.contracts.filter(contract => contract.id !== c.id);
-
-                            // Step 5 Tutorial trigger: Turning in ANY quest finishes tutorial!
-                            if (this.state.tutorial.active && this.state.tutorial.step === 5) {
-                                this.triggerTutorialStepFanfare(5);
-                                this.state.tutorial.step = 0;
-                                this.state.tutorial.active = false;
-                            }
+                            this.state.tutorial.questCompletedCount++;
 
                             // QUEST TIER PROGRESSION REQUIREMENTS:
                             // Tier 0 -> Tier 1: 3 Quest Tokens
@@ -1042,12 +1115,13 @@ Progress: (${c.currentVal}/${c.req})`, {
                                 this.state.questTier = 3;
                             }
 
+                            this.replaceQuestSlot(idx);
                             this.generateQuests();
                             this.requestLayoutRebuild();
                         });
                     }
 
-                    this.mainContainer.add([cardBg, txt, btnHandIn]);
+                    this.mainContainer.add([cardBg, txt, btnHandIn, cardHitZone]);
                 }
             });
         }
@@ -1067,7 +1141,7 @@ Progress: (${c.currentVal}/${c.req})`, {
                     ]
                 },
                 {
-                    id: 'paper', name: 'BLUE SHOP', color: '#1565c0',
+                    id: 'paper', name: 'PAPER SHOP', color: '#1565c0',
                     unlocked: this.state.binUpgrades.paper.shopUnlocked,
                     tier2Unlocked: this.state.binUpgrades.paper.tier2Unlocked,
                     tier3Unlocked: this.state.binUpgrades.paper.tier3Unlocked,
@@ -1677,18 +1751,18 @@ TOKENS: ${tokensStr}`, {
             let upgradeList = [];
             if (catKey === 'gate') {
                 upgradeList = [
-                    { id: 'gateFee', name: 'Gate Fee (+$1)', desc: 'Increases cash per customer', cost: `$${this.state.upgrades.gateFee.cost}`, lvl: this.state.upgrades.gateFee.lvl, max: 10, reqLvl: 1, canAfford: this.state.money >= this.state.upgrades.gateFee.cost, action: () => { this.state.money -= this.state.upgrades.gateFee.cost; this.state.g1Fee++; this.state.upgrades.gateFee.lvl++; this.state.upgrades.gateFee.cost *= 2; } },
-                    { id: 'footTraffic', name: 'Foot Traffic (+10%)', desc: 'Increases customer arrival chance per sec', cost: `$${this.state.upgrades.footTraffic.cost}`, lvl: this.state.upgrades.footTraffic.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.footTraffic.cost, action: () => { this.state.money -= this.state.upgrades.footTraffic.cost; this.state.customerSpawnChance = Math.min(1.0, this.state.customerSpawnChance + 0.10); this.state.upgrades.footTraffic.lvl++; this.state.upgrades.footTraffic.cost *= 2; } },
-                    { id: 'gateAuto', name: 'Auto Gate', desc: 'Auto opens gate on timer', cost: !this.state.isGateAuto ? '1 Token' : `$${this.state.upgrades.gateAuto.cost}`, lvl: this.state.upgrades.gateAuto.lvl, max: 5, reqLvl: 3, canAfford: !this.state.isGateAuto ? this.state.questTokens >= 1 : this.state.money >= this.state.upgrades.gateAuto.cost, action: () => { if (!this.state.isGateAuto) { this.state.questTokens -= 1; this.state.isGateAuto = true; } else { this.state.money -= this.state.upgrades.gateAuto.cost; this.state.autoGateSpeed = Math.max(1000, this.state.autoGateSpeed - 400); this.state.upgrades.gateAuto.cost *= 2; } this.state.upgrades.gateAuto.lvl++; } },
-                    { id: 'doubleTrash', name: 'Double Rubbish Chance', desc: '+10% chance for double stock', cost: `$${this.state.upgrades.doubleTrash.cost}`, lvl: this.state.upgrades.doubleTrash.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.doubleTrash.cost, action: () => { this.state.money -= this.state.upgrades.doubleTrash.cost; this.state.doubleTrashChance += 0.10; this.state.upgrades.doubleTrash.lvl++; this.state.upgrades.doubleTrash.cost *= 2; } },
-                    { id: 'busRush', name: 'Bus Rush Event', desc: 'Unlocks random orange bus events (Tap for +10 Rubbish!)', cost: `$${this.state.upgrades.busRush.cost}`, lvl: this.state.upgrades.busRush.lvl, max: 1, reqLvl: 4, canAfford: this.state.money >= this.state.upgrades.busRush.cost, action: () => { this.state.money -= this.state.upgrades.busRush.cost; this.state.upgrades.busRush.lvl = 1; this.state.busRushUnlocked = true; } }
+                    { id: 'gateFee', name: 'Gate Fee (+$1)', desc: 'Increases cash per customer', cost: '$' + this.state.upgrades.gateFee.cost, lvl: this.state.upgrades.gateFee.lvl, max: 10, reqLvl: 1, canAfford: this.state.money >= this.state.upgrades.gateFee.cost, action: () => { this.state.money -= this.state.upgrades.gateFee.cost; this.state.g1Fee++; this.state.upgrades.gateFee.lvl++; this.state.upgrades.gateFee.cost *= 2; } },
+                    { id: 'footTraffic', name: 'Foot Traffic (+10%)', desc: 'Increases customer arrival chance per sec', cost: '$' + this.state.upgrades.footTraffic.cost, lvl: this.state.upgrades.footTraffic.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.footTraffic.cost, action: () => { this.state.money -= this.state.upgrades.footTraffic.cost; this.state.customerSpawnChance = Math.min(1.0, this.state.customerSpawnChance + 0.10); this.state.upgrades.footTraffic.lvl++; this.state.upgrades.footTraffic.cost *= 2; } },
+                    { id: 'gateAuto', name: 'Auto Gate', desc: 'Auto opens gate on timer', cost: !this.state.isGateAuto ? '1 Token' : ('$' + this.state.upgrades.gateAuto.cost), lvl: this.state.upgrades.gateAuto.lvl, max: 5, reqLvl: 3, canAfford: !this.state.isGateAuto ? this.state.questTokens >= 1 : this.state.money >= this.state.upgrades.gateAuto.cost, action: () => { if (!this.state.isGateAuto) { this.state.questTokens -= 1; this.state.isGateAuto = true; } else { this.state.money -= this.state.upgrades.gateAuto.cost; this.state.autoGateSpeed = Math.max(1000, this.state.autoGateSpeed - 400); this.state.upgrades.gateAuto.cost *= 2; } this.state.upgrades.gateAuto.lvl++; } },
+                    { id: 'doubleTrash', name: 'Double Rubbish Chance', desc: '+10% chance for double stock', cost: '$' + this.state.upgrades.doubleTrash.cost, lvl: this.state.upgrades.doubleTrash.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.doubleTrash.cost, action: () => { this.state.money -= this.state.upgrades.doubleTrash.cost; this.state.doubleTrashChance += 0.10; this.state.upgrades.doubleTrash.lvl++; this.state.upgrades.doubleTrash.cost *= 2; } },
+                    { id: 'busRush', name: 'Bus Rush Event', desc: 'Unlocks random orange bus events (Tap for +10 Rubbish!)', cost: '$' + this.state.upgrades.busRush.cost, lvl: this.state.upgrades.busRush.lvl, max: 1, reqLvl: 4, canAfford: this.state.money >= this.state.upgrades.busRush.cost, action: () => { this.state.money -= this.state.upgrades.busRush.cost; this.state.upgrades.busRush.lvl = 1; this.state.busRushUnlocked = true; } }
                 ];
             } else if (catKey === 'tip') {
                 upgradeList = [
-                    { id: 'queueCap', name: 'Queue Capacity (+1)', desc: `Max capacity: ${this.state.maxTrashQueue}`, cost: `$${this.state.upgrades.queueCap.cost}`, lvl: this.state.upgrades.queueCap.lvl, max: 9, reqLvl: 1, canAfford: this.state.money >= this.state.upgrades.queueCap.cost, action: () => { this.state.money -= this.state.upgrades.queueCap.cost; this.state.maxTrashQueue++; this.state.upgrades.queueCap.lvl++; this.state.upgrades.queueCap.cost *= 2; } },
-                    { id: 'doubleToken', name: 'Chance for Double Token', desc: `Current chance: ${(this.state.doubleTokenChance * 100).toFixed(0)}%`, cost: `$${this.state.upgrades.doubleToken.cost}`, lvl: this.state.upgrades.doubleToken.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.doubleToken.cost, action: () => { this.state.money -= this.state.upgrades.doubleToken.cost; this.state.doubleTokenChance += 0.02; this.state.upgrades.doubleToken.lvl++; this.state.upgrades.doubleToken.cost *= 2; } },
-                    { id: 'autoQueue', name: 'Auto-Queue Feeder', desc: 'Auto draws trash into queue', cost: `$${this.state.upgrades.autoQueue.cost}`, lvl: this.state.upgrades.autoQueue.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.autoQueue.cost, action: () => { this.state.money -= this.state.upgrades.autoQueue.cost; if (!this.state.unlockedAutoQueue) this.state.unlockedAutoQueue = true; else this.state.autoQueueSpeed = Math.max(600, this.state.autoQueueSpeed - 350); this.state.upgrades.autoQueue.lvl++; this.state.upgrades.autoQueue.cost *= 2; } },
-                    { id: 'sanitiser', name: 'Sanitiser Station', desc: 'Unlocks SANITISE button (Doubles/Quads head item, 5s CD)', cost: '15 Tokens', lvl: this.state.upgrades.sanitiser.lvl, max: 1, reqLvl: 3, canAfford: !this.state.unlockedSanitiser && this.state.questTokens >= 15, action: () => { this.state.questTokens -= 15; this.state.unlockedSanitiser = true; this.state.upgrades.sanitiser.lvl = 1; } },
+                    { id: 'queueCap', name: 'Queue Capacity (+1)', desc: 'Max capacity: ' + this.state.maxTrashQueue, cost: '$' + this.state.upgrades.queueCap.cost, lvl: this.state.upgrades.queueCap.lvl, max: 9, reqLvl: 1, canAfford: this.state.money >= this.state.upgrades.queueCap.cost, action: () => { this.state.money -= this.state.upgrades.queueCap.cost; this.state.maxTrashQueue++; this.state.upgrades.queueCap.lvl++; this.state.upgrades.queueCap.cost *= 2; } },
+                    { id: 'doubleToken', name: 'Chance for Double Token', desc: 'Current chance: ' + (this.state.doubleTokenChance * 100).toFixed(0) + '%', cost: '$' + this.state.upgrades.doubleToken.cost, lvl: this.state.upgrades.doubleToken.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.doubleToken.cost, action: () => { this.state.money -= this.state.upgrades.doubleToken.cost; this.state.doubleTokenChance += 0.02; this.state.upgrades.doubleToken.lvl++; this.state.upgrades.doubleToken.cost *= 2; } },
+                    { id: 'autoQueue', name: 'Auto-Queue Feeder', desc: 'Auto draws trash into queue', cost: '$' + this.state.upgrades.autoQueue.cost, lvl: this.state.upgrades.autoQueue.lvl, max: 5, reqLvl: 2, canAfford: this.state.money >= this.state.upgrades.autoQueue.cost, action: () => { this.state.money -= this.state.upgrades.autoQueue.cost; if (!this.state.unlockedAutoQueue) this.state.unlockedAutoQueue = true; else this.state.autoQueueSpeed = Math.max(600, this.state.autoQueueSpeed - 350); this.state.upgrades.autoQueue.lvl++; this.state.upgrades.autoQueue.cost *= 2; } },
+                    { id: 'sanitiser', name: 'Sanitiser Station', desc: 'Unlocks SANITISE button (Doubles/Quads head item, 5s CD)', cost: '5 Tokens', lvl: this.state.upgrades.sanitiser.lvl, max: 1, reqLvl: 3, canAfford: !this.state.unlockedSanitiser && this.state.questTokens >= 5, action: () => { this.state.questTokens -= 5; this.state.unlockedSanitiser = true; this.state.upgrades.sanitiser.lvl = 1; } },
                     { id: 'autoSort', name: 'Auto Sort (Right-to-Left, 8s)', desc: 'Auto sorts right-most item every 8 sec', cost: '15 Tokens', lvl: this.state.upgrades.autoSort.lvl, max: 5, reqLvl: 4, canAfford: this.state.questTokens >= 15, action: () => { this.state.questTokens -= 15; this.state.unlockedAutoSort = true; this.state.upgrades.autoSort.lvl++; } }
                 ];
             } else {
@@ -1697,10 +1771,10 @@ TOKENS: ${tokensStr}`, {
                 const typeData = TRASH_TYPES[bId];
 
                 upgradeList = [
-                    { id: 'bgUnlocked', name: 'Lvl 1: Sprite Colored Background', desc: '10px black border circle behind item', cost: `10 ${typeData.name} Tokens`, lvl: bUp.bgUnlocked ? 1 : 0, max: 1, reqLvl: 1, canAfford: !bUp.bgUnlocked && this.state.resources[bId] >= 10, action: () => { this.state.resources[bId] -= 10; bUp.bgUnlocked = true; } },
-                    { id: 'shopUnlocked', name: 'Lvl 2: Unlock Workshop (Tier 1)', desc: 'Unlocks T1 craftables', cost: `$5 + 5 ${typeData.name} Tokens`, lvl: bUp.shopUnlocked ? 1 : 0, max: 1, reqLvl: 1, canAfford: !bUp.shopUnlocked && this.state.money >= 5 && this.state.resources[bId] >= 5, action: () => { this.state.money -= 5; this.state.resources[bId] -= 5; bUp.shopUnlocked = true; this.state.unlockedWorkshopsFacility = true; } },
-                    { id: 'tier2Unlocked', name: 'Lvl 3: Unlock Tier 2 Items', desc: 'Unlocks Tier 2 craftable items in shop', cost: `$10 + 10 ${typeData.name} Tokens`, lvl: bUp.tier2Unlocked ? 1 : 0, max: 1, reqLvl: 2, canAfford: bUp.shopUnlocked && !bUp.tier2Unlocked && this.state.money >= 10 && this.state.resources[bId] >= 10, action: () => { this.state.money -= 10; this.state.resources[bId] -= 10; bUp.tier2Unlocked = true; } },
-                    { id: 'tier3Unlocked', name: 'Lvl 4: Unlock Tier 3 Items', desc: 'Unlocks Tier 3 craftable items in shop', cost: `$15 + 15 ${typeData.name} Tokens`, lvl: bUp.tier3Unlocked ? 1 : 0, max: 1, reqLvl: 3, canAfford: bUp.tier2Unlocked && !bUp.tier3Unlocked && this.state.money >= 15 && this.state.resources[bId] >= 15, action: () => { this.state.money -= 15; this.state.resources[bId] -= 15; bUp.tier3Unlocked = true; } }
+                    { id: 'bgUnlocked', name: 'Lvl 1: Sprite Colored Background', desc: '10px black border circle behind item', cost: '10 ' + typeData.name + ' Tokens', lvl: bUp.bgUnlocked ? 1 : 0, max: 1, reqLvl: 1, canAfford: !bUp.bgUnlocked && this.state.resources[bId] >= 10, action: () => { this.state.resources[bId] -= 10; bUp.bgUnlocked = true; } },
+                    { id: 'shopUnlocked', name: 'Lvl 2: Unlock Workshop (Tier 1)', desc: 'Unlocks T1 craftables', cost: '$5 + 5 ' + typeData.name + ' Tokens', lvl: bUp.shopUnlocked ? 1 : 0, max: 1, reqLvl: 1, canAfford: !bUp.shopUnlocked && this.state.money >= 5 && this.state.resources[bId] >= 5, action: () => { this.state.money -= 5; this.state.resources[bId] -= 5; bUp.shopUnlocked = true; this.state.unlockedWorkshopsFacility = true; } },
+                    { id: 'tier2Unlocked', name: 'Lvl 3: Unlock Tier 2 Items', desc: 'Unlocks Tier 2 craftable items in shop', cost: '$10 + 10 ' + typeData.name + ' Tokens', lvl: bUp.tier2Unlocked ? 1 : 0, max: 1, reqLvl: 2, canAfford: bUp.shopUnlocked && !bUp.tier2Unlocked && this.state.money >= 10 && this.state.resources[bId] >= 10, action: () => { this.state.money -= 10; this.state.resources[bId] -= 10; bUp.tier2Unlocked = true; } },
+                    { id: 'tier3Unlocked', name: 'Lvl 4: Unlock Tier 3 Items', desc: 'Unlocks Tier 3 craftable items in shop', cost: '$15 + 15 ' + typeData.name + ' Tokens', lvl: bUp.tier3Unlocked ? 1 : 0, max: 1, reqLvl: 3, canAfford: bUp.tier2Unlocked && !bUp.tier3Unlocked && this.state.money >= 15 && this.state.resources[bId] >= 15, action: () => { this.state.money -= 15; this.state.resources[bId] -= 15; bUp.tier3Unlocked = true; } }
                 ];
             }
             return upgradeList;
@@ -1727,7 +1801,7 @@ TOKENS: ${tokensStr}`, {
             const sidebarW = 125;
 
             const title = this.add.text(boxLeft + 15, 18, '🛠️ UPGRADES & STATIONS', { fontSize: '14px', style: 'bold', color: '#4fc3f7' });
-            const walletTxt = this.add.text(boxLeft + boxW - 130, 18, `$${this.state.money} | 🎟️${this.state.questTokens}`, { fontSize: '11px', style: 'bold', color: '#00ff00' });
+            const walletTxt = this.add.text(boxLeft + boxW - 130, 18, '$' + this.state.money + ' | 🎟️' + this.state.questTokens, { fontSize: '11px', style: 'bold', color: '#00ff00' });
             this.modalContainer.add([title, walletTxt]);
 
             let currY = 46;
@@ -1767,7 +1841,7 @@ TOKENS: ${tokensStr}`, {
             if (this.binsSubmenuOpen) {
                 const binCats = [
                     { id: 'organic_shop', name: '🟢 Green Bin' },
-                    { id: 'paper_shop', name: '🔵 Blue Bin' },
+                    { id: 'paper_shop', name: '🔵 Paper Bin' },
                     { id: 'glass_shop', name: '🟣 Glass Bin' },
                     { id: 'plastic_shop', name: '🟡 Plastic Bin' }
                 ];
