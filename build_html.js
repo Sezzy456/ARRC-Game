@@ -60,10 +60,16 @@ const htmlContent = `<!DOCTYPE html>
                 // Facility Stats
                 g1Fee: 1,
                 bagValue: 1,
-                tipStockpile: 10,
+                tipStockpile: 5,
                 doubleTrashChance: 0.00,
                 doubleTokenChance: 0.00,
                 maxTrashQueue: 1,
+
+                // Streak & Dumpster Fire System
+                streak: 0,
+                streakHighScore: 0,
+                streakTimer: 0,
+                dumpsterFireActive: false,
 
                 // Customer Arrival Settings
                 customerSpawnChance: 0.30, // 30% chance per second
@@ -91,7 +97,7 @@ const htmlContent = `<!DOCTYPE html>
                 upgrades: {
                     gateFee: { lvl: 0, max: 10, cost: 2, reqLvl: 1 },
                     footTraffic: { lvl: 0, max: 5, cost: 5, reqLvl: 2 },
-                    gateAuto: { lvl: 0, max: 5, cost: 1, reqLvl: 3 },
+                    gateAuto: { lvl: 0, max: 5, cost: 1, reqLvl: 1 },
                     doubleTrash: { lvl: 0, max: 5, cost: 4, reqLvl: 2 },
                     busRush: { lvl: 0, max: 1, cost: 15, reqLvl: 4 },
 
@@ -104,10 +110,10 @@ const htmlContent = `<!DOCTYPE html>
 
                 // Bin Upgrades & Workshop Tier Unlocks
                 binUpgrades: {
-                    organic: { bgUnlocked: false, shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false, cheaperT1: false, reqLvlBg: 1, reqLvlShop: 1 },
-                    paper:   { bgUnlocked: false, shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false, cheaperT1: false, reqLvlBg: 1, reqLvlShop: 1 },
-                    glass:   { bgUnlocked: false, shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false, cheaperT1: false, reqLvlBg: 1, reqLvlShop: 1 },
-                    plastic: { bgUnlocked: false, shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false, cheaperT1: false, reqLvlBg: 1, reqLvlShop: 1 }
+                    organic: { bgUnlocked: false, shopUnlocked: false, t1Bought: false, tier2Unlocked: false, tier3Unlocked: false, reqLvlBg: 1, reqLvlShop: 1 },
+                    paper:   { bgUnlocked: false, shopUnlocked: false, t1Bought: false, tier2Unlocked: false, tier3Unlocked: false, reqLvlBg: 1, reqLvlShop: 1 },
+                    glass:   { bgUnlocked: false, shopUnlocked: false, t1Bought: false, tier2Unlocked: false, tier3Unlocked: false, reqLvlBg: 1, reqLvlShop: 1 },
+                    plastic: { bgUnlocked: false, shopUnlocked: false, t1Bought: false, tier2Unlocked: false, tier3Unlocked: false, reqLvlBg: 1, reqLvlShop: 1 }
                 },
 
                 // Tutorial State
@@ -311,6 +317,61 @@ const htmlContent = `<!DOCTYPE html>
                 },
                 loop: true
             });
+        }
+
+        update(time, delta) {
+            if (this.state && this.state.streakTimer > 0) {
+                this.state.streakTimer = Math.max(0, this.state.streakTimer - delta);
+                if (this.state.streakTimer <= 0) {
+                    this.state.streak = 0;
+                    this.state.dumpsterFireActive = false;
+                }
+                this.renderDumpsterFireBar();
+            } else if (this.state && this.state.streak === 0) {
+                this.renderDumpsterFireBar();
+            }
+        }
+
+        renderDumpsterFireBar() {
+            if (!this.dumpsterBarGfx) return;
+            this.dumpsterBarGfx.clear();
+
+            if (!this.bins || this.bins.length < 4) return;
+            const startBinX = this.bins[0].x - 26;
+            const endBinX = this.bins[3].x + 26;
+            const barW = endBinX - startBinX;
+            const barY = this.bins[0].y + 40;
+            const barH = 8;
+
+            if (this.state.streakTimer > 0) {
+                const ratio = Math.min(1, Math.max(0, this.state.streakTimer / 2000));
+                const currentWidth = barW * ratio;
+
+                let colorHex = 0xffd700;
+                if (this.state.dumpsterFireActive) colorHex = 0xff3d00;
+                else if (ratio < 0.4) colorHex = 0xf44336;
+                else if (ratio < 0.7) colorHex = 0xff9800;
+
+                this.dumpsterBarGfx.fillStyle(0x222222, 0.8);
+                this.dumpsterBarGfx.fillRect(startBinX, barY, barW, barH);
+                this.dumpsterBarGfx.lineStyle(1, 0x444444, 1);
+                this.dumpsterBarGfx.strokeRect(startBinX, barY, barW, barH);
+
+                this.dumpsterBarGfx.fillStyle(colorHex, 1);
+                this.dumpsterBarGfx.fillRect(startBinX, barY, currentWidth, barH);
+
+                if (this.dumpsterStreakText) {
+                    this.dumpsterStreakText.setText('streak: ' + this.state.streak + '\\nhigh score: ' + this.state.streakHighScore);
+                    this.dumpsterStreakText.setVisible(true);
+                }
+
+                if (this.dumpsterFireBanner) {
+                    this.dumpsterFireBanner.setVisible(this.state.dumpsterFireActive);
+                }
+            } else {
+                if (this.dumpsterStreakText) this.dumpsterStreakText.setVisible(false);
+                if (this.dumpsterFireBanner) this.dumpsterFireBanner.setVisible(false);
+            }
         }
 
         spawnCustomer() {
@@ -758,11 +819,33 @@ const htmlContent = `<!DOCTYPE html>
             this.renderContractsUI(width, questY);
 
             // 2. WORKSHOPS
-            if (!this.state.tutorial.active && this.state.unlockedWorkshopsFacility) {
-                const shopHeader = this.add.text(width / 2, workshopHeaderY, '🛠️ WORKSHOPS 🛠️', { fontSize: '16px', style: 'bold', color: '#4fc3f7' }).setOrigin(0.5);
-                this.mainContainer.add(shopHeader);
-                this.renderConveyorHUD(width, conveyorY);
-                this.renderWorkshopsUI(width, logicalHeight, workshopY);
+            if (!this.state.tutorial.active) {
+                if (this.state.unlockedWorkshopsFacility) {
+                    const shopHeader = this.add.text(width / 2, workshopHeaderY, '🛠️ WORKSHOPS 🛠️', { fontSize: '16px', style: 'bold', color: '#4fc3f7' }).setOrigin(0.5);
+                    this.mainContainer.add(shopHeader);
+                    this.renderConveyorHUD(width, conveyorY);
+                    this.renderWorkshopsUI(width, logicalHeight, workshopY);
+                } else {
+                    const canAffordFacility = this.state.questTokens >= 10;
+                    const btnUnlockFacility = this.add.text(width / 2, workshopHeaderY + 20, '🛠️ BUY WORKSHOPS (10 Quest Tokens) 🛠️', {
+                        fontSize: '12.5px', style: 'bold',
+                        backgroundColor: canAffordFacility ? '#00e676' : '#334155',
+                        color: canAffordFacility ? '#000000' : '#ffd700',
+                        padding: { x: 12, y: 7 }
+                    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+                    btnUnlockFacility.on('pointerup', () => {
+                        if (this.state.questTokens >= 10) {
+                            this.state.questTokens -= 10;
+                            this.state.unlockedWorkshopsFacility = true;
+                            Object.keys(this.state.binUpgrades).forEach(bId => {
+                                this.state.binUpgrades[bId].shopUnlocked = true;
+                            });
+                            this.requestLayoutRebuild();
+                        }
+                    });
+                    this.mainContainer.add(btnUnlockFacility);
+                }
             }
 
             // 3. QUEUE ROW
@@ -842,6 +925,22 @@ const htmlContent = `<!DOCTYPE html>
                 this.mainContainer.add([sprite, label, countText, btnBinUp, binHighlightGfx]);
             });
 
+            // Dumpster Fire Bar Setup directly under bins (binY + 44)
+            this.dumpsterBarGfx = this.add.graphics();
+            const barStartX = this.bins[0].x - 26;
+            const barEndX = this.bins[3].x + 26;
+            const barCenter = (barStartX + barEndX) / 2;
+
+            this.dumpsterStreakText = this.add.text(barEndX + 8, binY + 22, '', {
+                fontSize: '10px', style: 'bold', color: '#ffca28'
+            }).setOrigin(0, 0);
+
+            this.dumpsterFireBanner = this.add.text(barCenter, binY + 54, '🔥 DUMPSTER FIRE (2X TOKENS) 🔥', {
+                fontSize: '11px', style: 'bold', color: '#ffffff', backgroundColor: '#ff3d00', padding: { x: 8, y: 2 }
+            }).setOrigin(0.5).setVisible(false);
+
+            this.mainContainer.add([this.dumpsterBarGfx, this.dumpsterStreakText, this.dumpsterFireBanner]);
+
             // 5. GATE & TIP
             this.gatePos = { x: width * 0.35, y: bottomY };
             this.tipPos = { x: width * 0.65, y: bottomY };
@@ -850,7 +949,7 @@ const htmlContent = `<!DOCTYPE html>
             this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE [C]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
 
             const hasGateAffordable = this.hasCategoryAffordable('gate');
-            const btnGateUpArrow = this.add.text(this.gatePos.x - 45, bottomY - 18, hasGateAffordable ? '▲ (!)' : '▲', {
+            const btnGateUpArrow = this.add.text(this.gatePos.x + 45, bottomY - 18, hasGateAffordable ? '▲ (!)' : '▲', {
                 fontSize: '13px', style: 'bold', color: '#ffd700', backgroundColor: '#222', padding: 4
             }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                 this.openModal('upgrades', 'gate');
@@ -958,13 +1057,23 @@ const htmlContent = `<!DOCTYPE html>
             this.tutorialIndicatorsGfx.lineStyle(3, color, alpha);
 
             const step = this.state.tutorial.step;
+            const activeContract = this.contracts && this.contracts[0];
+            const isStepCompleted = activeContract && (activeContract.currentVal >= activeContract.req);
+
+            if (isStepCompleted && this.questCardPositions && this.questCardPositions[0]) {
+                const cardPos = this.questCardPositions[0];
+                this.tutorialIndicatorsGfx.strokeCircle(cardPos.x, cardPos.y, 45);
+                return;
+            }
 
             if (step === 1) {
                 this.tutorialIndicatorsGfx.strokeCircle(this.tipPos.x, this.tipPos.y, 40);
             } else if (step === 3) {
                 this.tutorialIndicatorsGfx.strokeCircle(this.gatePos.x, this.gatePos.y, 40);
             } else if (step === 4) {
-                this.tutorialIndicatorsGfx.strokeRect(this.btnUpgradeCap.x - 45, this.btnUpgradeCap.y - 12, 90, 24);
+                if (this.btnUpgradeCap) {
+                    this.tutorialIndicatorsGfx.strokeRect(this.btnUpgradeCap.x - 45, this.btnUpgradeCap.y - 12, 90, 24);
+                }
             }
         }
 
@@ -1035,9 +1144,12 @@ const htmlContent = `<!DOCTYPE html>
             const gap = 12;
             const startX = (w - (this.contracts.length * cardW + (this.contracts.length - 1) * gap)) / 2 + (cardW / 2);
 
+            this.questCardPositions = [];
+
             this.contracts.forEach((c, idx) => {
                 if (!c) return;
                 const cx = startX + (idx * (cardW + gap));
+                this.questCardPositions.push({ x: cx, y: y });
 
                 if (c.isTutorial) {
                     const isDone = (c.currentVal >= c.req);
@@ -1062,6 +1174,7 @@ const htmlContent = `<!DOCTYPE html>
 
                     if (isDone) {
                         cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                            this.state.questTokens += 1;
                             if (c.onComplete) c.onComplete();
                         });
                     }
@@ -1078,7 +1191,7 @@ const htmlContent = `<!DOCTYPE html>
                     cardBg.lineStyle(2, outlineColor, 1);
                     cardBg.strokeRect(cx - (cardW/2), y - 24, cardW, cardH);
 
-                    const txt = this.add.text(cx, y - 4, c.req + ' ' + c.name + '\\n(+$' + c.rewardCash + ' | +' + c.rewardTokens + ' Tkn)', {
+                    const txt = this.add.text(cx, y - 4, c.req + ' ' + c.name + '\\n(+$' + c.rewardCash + ' | +' + (c.rewardTokens || 1) + ' Tkn)', {
                         fontSize: '10.5px', style: 'bold', color: c.color, align: 'center', wordWrap: { width: cardW - 8 }
                     }).setOrigin(0.5);
                     
@@ -1094,19 +1207,19 @@ const htmlContent = `<!DOCTYPE html>
                             else this.state.crafted[c.itemKey] -= c.req;
 
                             this.state.money += c.rewardCash;
-                            if (c.rewardTokens) this.state.questTokens += c.rewardTokens;
+                            this.state.questTokens += (c.rewardTokens || 1);
                             this.state.totalQuestsCompleted++;
                             this.state.tutorial.questCompletedCount++;
 
                             // QUEST TIER PROGRESSION REQUIREMENTS:
                             // Tier 0 -> Tier 1: 3 Quest Tokens
-                            // Tier 1 -> Tier 2: 10 Quest Tokens
-                            // Tier 2 -> Tier 3: 20 Completed Quests
+                            // Tier 1 -> Tier 2: 15 Completed Quests Total
+                            // Tier 2 -> Tier 3: 30 Completed Quests Total
                             if (this.state.questTier === 0 && this.state.questTokens >= 3) {
                                 this.state.questTier = 1;
-                            } else if (this.state.questTier === 1 && this.state.questTokens >= 10) {
+                            } else if (this.state.questTier <= 1 && this.state.totalQuestsCompleted >= 15) {
                                 this.state.questTier = 2;
-                            } else if (this.state.questTier === 2 && this.state.totalQuestsCompleted >= 20) {
+                            } else if (this.state.questTier === 2 && this.state.totalQuestsCompleted >= 30) {
                                 this.state.questTier = 3;
                             }
 
@@ -1212,16 +1325,63 @@ const htmlContent = `<!DOCTYPE html>
 
                     s.recipes.forEach((r, rIdx) => {
                         const ry = shopYPos + 12 + (rIdx * 22);
-                        const isTierUnlocked = (r.tier === 1) || (r.tier === 2 && s.tier2Unlocked) || (r.tier === 3 && s.tier3Unlocked);
+                        const bUp = this.state.binUpgrades[s.id];
+                        const isTierUnlocked = (r.tier === 1 && bUp.t1Bought) || (r.tier === 2 && bUp.tier2Unlocked) || (r.tier === 3 && bUp.tier3Unlocked);
 
                         if (!isTierUnlocked) {
-                            const lockLabel = this.add.text(sx, ry, \`🔒 Tier \${r.tier} Locked\`, { fontSize: '9.5px', color: '#888888', style: 'italic' }).setOrigin(0.5);
-                            this.mainContainer.add(lockLabel);
+                            let lockText = '';
+                            let canAffordTier = false;
+                            let unlockFn = () => {};
+
+                            if (r.tier === 1) {
+                                lockText = '[T1 Locked] $5 + 5 Tokens';
+                                canAffordTier = this.state.money >= 5 && this.state.resources[s.id] >= 5;
+                                unlockFn = () => {
+                                    if (canAffordTier) {
+                                        this.state.money -= 5;
+                                        this.state.resources[s.id] -= 5;
+                                        bUp.t1Bought = true;
+                                        this.requestLayoutRebuild();
+                                    }
+                                };
+                            } else if (r.tier === 2) {
+                                lockText = '[T2 Locked] $10 + 10 Tokens';
+                                canAffordTier = bUp.t1Bought && this.state.money >= 10 && this.state.resources[s.id] >= 10;
+                                unlockFn = () => {
+                                    if (canAffordTier) {
+                                        this.state.money -= 10;
+                                        this.state.resources[s.id] -= 10;
+                                        bUp.tier2Unlocked = true;
+                                        this.requestLayoutRebuild();
+                                    }
+                                };
+                            } else if (r.tier === 3) {
+                                lockText = '[T3 Locked] $15 + 15 Tokens';
+                                canAffordTier = bUp.tier2Unlocked && this.state.money >= 15 && this.state.resources[s.id] >= 15;
+                                unlockFn = () => {
+                                    if (canAffordTier) {
+                                        this.state.money -= 15;
+                                        this.state.resources[s.id] -= 15;
+                                        bUp.tier3Unlocked = true;
+                                        this.requestLayoutRebuild();
+                                    }
+                                };
+                            }
+
+                            const btnLockTier = this.add.text(sx, ry, lockText, {
+                                fontSize: '9px', style: 'bold',
+                                backgroundColor: canAffordTier ? '#ff9800' : '#2b2b2b',
+                                color: canAffordTier ? '#000000' : '#aaaaaa',
+                                padding: { x: 3, y: 1 }
+                            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+                            btnLockTier.on('pointerup', unlockFn);
+                            this.mainContainer.add(btnLockTier);
                         } else {
                             const ownedCount = this.state.crafted[r.key] || 0;
                             const canCraft = this.state.resources[r.resKey] >= r.costVal;
 
-                            const label = this.add.text(sx - (boxW/2) + 6, ry, \`(\${ownedCount}) \${r.name}\`, { fontSize: '10.5px', color: '#fff', style: 'bold' }).setOrigin(0, 0.5);
+                            const label = this.add.text(sx - (boxW/2) + 6, ry, '(' + ownedCount + ') ' + r.name, { fontSize: '10.5px', color: '#fff', style: 'bold' }).setOrigin(0, 0.5);
                             const btnCraft = this.add.text(sx + (boxW/2) - 6, ry, r.req, {
                                 fontSize: '10.5px', style: 'bold',
                                 backgroundColor: canCraft ? '#00e676' : '#424242',
@@ -1245,14 +1405,21 @@ const htmlContent = `<!DOCTYPE html>
                     emptyBox.lineStyle(1.5, 0x444444, 1);
                     emptyBox.strokeRect(sx - (boxW/2), sy - 18, boxW, boxH);
 
-                    const title = this.add.text(sx, sy + 10, \`\${s.name}\n(Locked)\`, { fontSize: '11px', style: 'bold', color: '#666', align: 'center' }).setOrigin(0.5);
+                    const title = this.add.text(sx, sy + 10, s.name + '\\n(Locked)', { fontSize: '11px', style: 'bold', color: '#666', align: 'center' }).setOrigin(0.5);
 
-                    const btnBuy = this.add.text(sx, sy - 2, \`BUY WORKSHOP\n(\$5 + 5 Tokens)\`, {
-                        fontSize: '10px', style: 'bold', backgroundColor: '#333', color: '#ffd700', align: 'center', padding: 4
+                    const btnBuy = this.add.text(sx, sy - 2, 'BUY WORKSHOPS FACILITY\\n(10 Quest Tokens)', {
+                        fontSize: '9.5px', style: 'bold', backgroundColor: '#333', color: '#ffd700', align: 'center', padding: 4
                     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
                     btnBuy.on('pointerup', () => {
-                        this.openModal('upgrades', s.id + '_shop');
+                        if (this.state.questTokens >= 10) {
+                            this.state.questTokens -= 10;
+                            this.state.unlockedWorkshopsFacility = true;
+                            Object.keys(this.state.binUpgrades).forEach(bId => {
+                                this.state.binUpgrades[bId].shopUnlocked = true;
+                            });
+                            this.requestLayoutRebuild();
+                        }
                     });
 
                     this.mainContainer.add([emptyBox, title, btnBuy]);
@@ -1598,7 +1765,7 @@ const htmlContent = `<!DOCTYPE html>
         sortHeadTrash(targetType, itemIndex = 0) {
             if (this.trashQueue.length === 0 || itemIndex >= this.trashQueue.length) return;
 
-            this.state.autoSortTimer = 0;
+            const isManualSort = (itemIndex === 0);
             const item = this.trashQueue.splice(itemIndex, 1)[0];
             const targetBin = this.bins.find(b => b.id === targetType);
             const isCorrect = (item.type === targetType);
@@ -1606,6 +1773,25 @@ const htmlContent = `<!DOCTYPE html>
             if (this.state.tutorial.active && this.state.tutorial.step === 4) {
                 this.generateQuests();
                 this.requestLayoutRebuild();
+            }
+
+            if (!isCorrect && this.state.tutorial.active) {
+                // In tutorial: return item to hero spot, shake, flash red, do not deduct rubbish
+                this.trashQueue.unshift(item);
+                this.renderHorizontalQueue();
+
+                if (this.cameras && this.cameras.main) this.cameras.main.flash(120, 255, 0, 0);
+                this.wrongBinTipShake = 10;
+                if (this.tweens && this.tweens.add) {
+                    this.tweens.add({
+                        targets: this,
+                        wrongBinTipShake: 0,
+                        duration: 800,
+                        onUpdate: () => this.requestLayoutRebuild()
+                    });
+                }
+                this.requestLayoutRebuild();
+                return;
             }
 
             this.renderHorizontalQueue();
@@ -1621,7 +1807,18 @@ const htmlContent = `<!DOCTYPE html>
                         onComplete: () => {
                             item.container.destroy();
                             if (isCorrect) {
-                                const mult = item.multiplier || 1;
+                                if (isManualSort) {
+                                    this.state.streak++;
+                                    this.state.streakHighScore = Math.max(this.state.streakHighScore, this.state.streak);
+                                    this.state.streakTimer = 2000;
+                                    if (this.state.streak >= 10) {
+                                        this.state.dumpsterFireActive = true;
+                                    }
+                                }
+
+                                let mult = item.multiplier || 1;
+                                if (this.state.dumpsterFireActive) mult *= 2;
+
                                 this.state.resources[targetType] += mult;
                                 this.addXP(mult);
 
@@ -1630,9 +1827,10 @@ const htmlContent = `<!DOCTYPE html>
                                     this.generateQuests();
                                 }
 
-                                const popText = mult > 1 ? \`+\${mult} Tokens (\${mult}X!)\` : '+1 Token';
+                                const isFire = this.state.dumpsterFireActive;
+                                const popText = isFire ? ('+' + mult + ' Tokens (FIRE 2X!)') : (mult > 1 ? ('+' + mult + ' Tokens (' + mult + 'X!)') : '+1 Token');
                                 const popOne = this.add.text(targetBin.x, targetBin.y - 15, popText, {
-                                    fontSize: '15px', style: 'bold', color: mult > 1 ? '#ffd700' : '#00ff00'
+                                    fontSize: '14px', style: 'bold', color: isFire ? '#ff3d00' : (mult > 1 ? '#ffd700' : '#00ff00')
                                 }).setOrigin(0.5).setDepth(20);
 
                                 if (this.tweens && this.tweens.add) {
@@ -1640,30 +1838,35 @@ const htmlContent = `<!DOCTYPE html>
                                 } else {
                                     popOne.destroy();
                                 }
-
                             } else {
+                                this.state.streak = 0;
+                                this.state.dumpsterFireActive = false;
+                                this.state.streakTimer = 0;
                                 if (this.cameras && this.cameras.main) this.cameras.main.flash(120, 255, 0, 0);
-                                this.wrongBinTipShake = 10;
-                                
-                                if (this.tweens && this.tweens.add) {
-                                    this.tweens.add({
-                                        targets: this,
-                                        wrongBinTipShake: 0,
-                                        duration: 800,
-                                        onUpdate: () => this.requestLayoutRebuild()
-                                    });
-                                }
                             }
+                            this.renderDumpsterFireBar();
                             this.requestLayoutRebuild();
                         }
                     });
                 } else {
                     item.container.destroy();
                     if (isCorrect) {
-                        const mult = item.multiplier || 1;
+                        if (isManualSort) {
+                            this.state.streak++;
+                            this.state.streakHighScore = Math.max(this.state.streakHighScore, this.state.streak);
+                            this.state.streakTimer = 2000;
+                            if (this.state.streak >= 10) this.state.dumpsterFireActive = true;
+                        }
+                        let mult = item.multiplier || 1;
+                        if (this.state.dumpsterFireActive) mult *= 2;
                         this.state.resources[targetType] += mult;
                         this.addXP(mult);
+                    } else {
+                        this.state.streak = 0;
+                        this.state.dumpsterFireActive = false;
+                        this.state.streakTimer = 0;
                     }
+                    this.renderDumpsterFireBar();
                     this.requestLayoutRebuild();
                 }
             }
