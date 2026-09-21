@@ -3,9 +3,13 @@ const spritesData = JSON.parse(fs.readFileSync('sprites_data.json', 'utf8'));
 
 let greenBinsB64 = '';
 let yellowBinsB64 = '';
+let blueBinsB64 = '';
+let purpleBinsB64 = '';
 try {
     greenBinsB64 = 'data:image/png;base64,' + fs.readFileSync('Assets/Bins/GreenBins.png').toString('base64');
     yellowBinsB64 = 'data:image/png;base64,' + fs.readFileSync('Assets/Bins/YellowBins.png').toString('base64');
+    blueBinsB64 = 'data:image/png;base64,' + fs.readFileSync('Assets/Bins/BlueBins.png').toString('base64');
+    purpleBinsB64 = 'data:image/png;base64,' + fs.readFileSync('Assets/Bins/PurpleBins.png').toString('base64');
 } catch (e) {
     console.warn('Could not read bin spritesheets:', e.message);
 }
@@ -56,6 +60,8 @@ const htmlContent = `<!DOCTYPE html>
     const RUBBISH_SPRITES = ${JSON.stringify(spritesData, null, 2)};
     const GREEN_BINS_B64 = "${greenBinsB64}";
     const YELLOW_BINS_B64 = "${yellowBinsB64}";
+    const BLUE_BINS_B64 = "${blueBinsB64}";
+    const PURPLE_BINS_B64 = "${purpleBinsB64}";
 
     // ==========================================
     // BIN SPRITES & ANIMATION CONFIGURATION
@@ -379,6 +385,8 @@ const htmlContent = `<!DOCTYPE html>
             };
 
             registerBinSheet('bin_green_sheet', 'bin_green_anim', GREEN_BINS_B64);
+            registerBinSheet('bin_blue_sheet', 'bin_blue_anim', BLUE_BINS_B64);
+            registerBinSheet('bin_purple_sheet', 'bin_purple_anim', PURPLE_BINS_B64);
             registerBinSheet('bin_yellow_sheet', 'bin_yellow_anim', YELLOW_BINS_B64);
 
             // Create gentle clouds
@@ -948,7 +956,23 @@ const htmlContent = `<!DOCTYPE html>
                 .map(c => c.itemKey);
 
             let candidates = pool.filter(template => !activeKeys.includes(template.itemKey));
-            if (candidates.length === 0) candidates = pool;
+            if (candidates.length === 0) candidates = pool.slice();
+
+            // CRITICAL: Prevent soft-lock! No crafting quests until player has unlocked workshops OR has at least 10 quest tokens
+            const canCraft = (this.state.unlockedWorkshopsFacility || this.state.questTokens >= 10);
+            if (!canCraft) {
+                candidates = candidates.filter(template => template.isResource === true);
+            }
+
+            // Only request active/unlocked resource types
+            candidates = candidates.filter(template => {
+                if (!template.isResource) return true;
+                return !this.state.activeTypes || this.state.activeTypes[template.itemKey] !== false;
+            });
+
+            if (candidates.length === 0) {
+                candidates = pool.filter(template => template.isResource === true);
+            }
 
             const template = candidates[Math.floor(Math.random() * candidates.length)];
             this.contracts[slotIndex] = this.createQuestObject(template);
@@ -1045,6 +1069,16 @@ const htmlContent = `<!DOCTYPE html>
                 this.contracts.push(null);
                 this.replaceQuestSlot(nextIdx);
             }
+
+            // AUTO-HEAL SOFT LOCK: If player cannot craft yet, replace any crafted item quests!
+            const canCraft = (this.state.unlockedWorkshopsFacility || this.state.questTokens >= 10);
+            if (!canCraft && this.contracts) {
+                this.contracts.forEach((c, idx) => {
+                    if (c && !c.isResource && !c.isTutorial) {
+                        this.replaceQuestSlot(idx);
+                    }
+                });
+            }
         }
 
         handleResize(gameSize) {
@@ -1073,12 +1107,18 @@ const htmlContent = `<!DOCTYPE html>
                 this.renderTutorialBanner(width, questY + 105);
             }
 
+            const bottomY = isMobile ? logicalHeight - 190 : logicalHeight - 135;
+            const binY = bottomY - 78;
+            const queueY = binY - 72;
+
             const workshopHeaderY = questY + (this.state.tutorial.active ? 195 : 95);
             const conveyorY = workshopHeaderY + 24;
             const workshopY = conveyorY + 45;
 
-            // Environmental Sky & Ground Layer
-            const splitY = workshopY + 85;
+            // Environmental Sky & Ground Layer:
+            // The horizon line is fixed at a permanent, stable position relative to the ground elements (queueY - 85).
+            // It remains completely stationary when the tutorial ends and when workshops are unlocked!
+            const splitY = isMobile ? Math.round(logicalHeight * 0.44) : (queueY - 85);
             const envGfx = this.add.graphics();
             // Sky gradient
             envGfx.fillStyle(0x64b5f6, 1);
@@ -1099,10 +1139,6 @@ const htmlContent = `<!DOCTYPE html>
                 envGfx.fillRect(0, splitY, width, 14);
             }
             this.mainContainer.add(envGfx);
-
-            const bottomY = isMobile ? logicalHeight - 190 : logicalHeight - 135;
-            const binY = bottomY - 78;
-            const queueY = binY - 72;
 
             const activeBinCount = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length;
             const binSpacing = Math.min(width * (1 / (activeBinCount + 0.8)), 88);
@@ -1230,12 +1266,12 @@ const htmlContent = `<!DOCTYPE html>
 
             this.mainContainer.add([this.queueCounterText, this.btnUpgradeCap, this.queueHighlight]);
 
-            // 4. BINS (Includes animated Green & Yellow bins!)
+            // 4. BINS (Includes animated Green, Blue, Purple & Yellow wheelie bins!)
             this.bins = [];
             const binData = [
                 { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', count: this.state.resources.organic, sheetKey: 'bin_green_sheet', animKey: 'bin_green_anim' },
-                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', count: this.state.resources.paper },
-                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', count: this.state.resources.glass },
+                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', count: this.state.resources.paper, sheetKey: 'bin_blue_sheet', animKey: 'bin_blue_anim' },
+                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', count: this.state.resources.glass, sheetKey: 'bin_purple_sheet', animKey: 'bin_purple_anim' },
                 { id: 'plastic', key: '4', name: 'PLAST', sprite: 'bin_yellow', count: this.state.resources.plastic, sheetKey: 'bin_yellow_sheet', animKey: 'bin_yellow_anim' }
             ];
             if (this.state.activeTypes.metal) {
@@ -1517,64 +1553,57 @@ const htmlContent = `<!DOCTYPE html>
             const startX = (w - (this.contracts.length * cardW + (this.contracts.length - 1) * gap)) / 2 + (cardW / 2);
 
             this.questCardPositions = [];
+            this.contractCardViews = [];
 
             this.contracts.forEach((c, idx) => {
                 if (!c) return;
                 const cx = startX + (idx * (cardW + gap));
                 this.questCardPositions.push({ x: cx, y: y });
 
+                const cardBg = this.add.graphics();
+                const cardHitZone = this.add.zone(cx, y + 13, cardW, cardH).setOrigin(0.5);
+
+                let txt, btnHandIn, outlineColor;
+
                 if (c.isTutorial) {
                     const isDone = (c.currentVal >= c.req);
-                    const cardBg = this.add.graphics();
-                    cardBg.fillStyle(isDone ? 0x1b5e20 : 0x1e293b, 0.95);
-                    cardBg.fillRect(cx - (cardW/2), y - 24, cardW, cardH);
-                    cardBg.lineStyle(2, isDone ? 0x00e676 : 0xffd700, 1);
-                    cardBg.strokeRect(cx - (cardW/2), y - 24, cardW, cardH);
+                    outlineColor = 0xffd700;
 
-                    const txt = this.add.text(cx, y - 4, c.name + '\\nProgress: (' + c.currentVal + '/' + c.req + ')', {
-                        fontSize: '10.5px', style: 'bold', color: c.color || '#ffffff', align: 'center', wordWrap: { width: cardW - 8 }
+                    txt = this.add.text(cx, y - 4, c.name + '\\nProgress: (' + c.currentVal + '/' + c.req + ')', {
+                        fontSize: '11px', style: 'bold', color: c.color || '#ffffff', align: 'center', wordWrap: { width: cardW - 8 }
                     }).setOrigin(0.5);
 
                     const btnText = isDone ? '[ COMPLETE ]' : ('(' + c.currentVal + '/' + c.req + ')');
-                    const btnStatus = this.add.text(cx, y + 24, btnText, {
-                        fontSize: '9.5px', style: 'bold',
+                    btnHandIn = this.add.text(cx, y + 24, btnText, {
+                        fontSize: '10px', style: 'bold',
                         backgroundColor: isDone ? '#00e676' : '#334155',
-                        color: isDone ? '#000' : '#ffd700', padding: {x: 5, y: 2}
+                        color: isDone ? '#000000' : '#ffd700', padding: { x: 5, y: 2 }
                     }).setOrigin(0.5);
 
-                    const cardHitZone = this.add.zone(cx, y + 13, cardW, cardH).setOrigin(0.5);
-
-                    if (isDone) {
-                        cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                    cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                        if (c.currentVal >= c.req) {
                             this.state.questTokens += 1;
                             if (c.onComplete) c.onComplete();
-                        });
-                    }
-
-                    this.mainContainer.add([cardBg, txt, btnStatus, cardHitZone]);
+                        }
+                    });
                 } else {
                     const current = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
                     const canFulfill = current >= c.req;
-                    const outlineColor = Phaser.Display.Color.ValueToColor(c.color).color;
+                    outlineColor = Phaser.Display.Color.ValueToColor(c.color).color;
 
-                    const cardBg = this.add.graphics();
-                    cardBg.fillStyle(canFulfill ? 0x1b5e20 : 0x222222, 0.95);
-                    cardBg.fillRect(cx - (cardW/2), y - 24, cardW, cardH);
-                    cardBg.lineStyle(2, outlineColor, 1);
-                    cardBg.strokeRect(cx - (cardW/2), y - 24, cardW, cardH);
-
-                    const txt = this.add.text(cx, y - 4, c.req + ' ' + c.name + '\\n(+$' + c.rewardCash + ' | +' + (c.rewardTokens || 1) + ' Tkn)', {
-                        fontSize: '10.5px', style: 'bold', color: c.color, align: 'center', wordWrap: { width: cardW - 8 }
-                    }).setOrigin(0.5);
-                    
-                    const btnHandIn = this.add.text(cx, y + 24, canFulfill ? '[ TURN IN ]' : ('(' + current + '/' + c.req + ')'), {
-                        fontSize: '10px', style: 'bold', backgroundColor: canFulfill ? '#00e676' : '#424242', color: canFulfill ? '#000' : '#aaa', padding: {x: 5, y: 2}
+                    txt = this.add.text(cx, y - 4, c.req + ' ' + c.name + '\\n(+$' + c.rewardCash + ' | +' + (c.rewardTokens || 1) + ' Tkn)', {
+                        fontSize: '11px', style: 'bold', color: c.color, align: 'center', wordWrap: { width: cardW - 8 }
                     }).setOrigin(0.5);
 
-                    const cardHitZone = this.add.zone(cx, y + 13, cardW, cardH).setOrigin(0.5);
+                    btnHandIn = this.add.text(cx, y + 24, canFulfill ? '[ TURN IN ]' : ('(' + current + '/' + c.req + ')'), {
+                        fontSize: '10px', style: 'bold',
+                        backgroundColor: canFulfill ? '#00e676' : '#424242',
+                        color: canFulfill ? '#000000' : '#aaaaaa', padding: { x: 5, y: 2 }
+                    }).setOrigin(0.5);
 
-                    if (canFulfill) {
-                        cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                    cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                        const nowCount = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
+                        if (nowCount >= c.req) {
                             if (c.isResource) this.state.resources[c.itemKey] -= c.req;
                             else this.state.crafted[c.itemKey] -= c.req;
 
@@ -1584,9 +1613,6 @@ const htmlContent = `<!DOCTYPE html>
                             this.state.tutorial.questCompletedCount++;
 
                             // QUEST TIER PROGRESSION REQUIREMENTS:
-                            // Tier 0 -> Tier 1: 3 Quest Tokens
-                            // Tier 1 -> Tier 2: 15 Completed Quests Total
-                            // Tier 2 -> Tier 3: 30 Completed Quests Total
                             if (this.state.questTier === 0 && this.state.questTokens >= 3) {
                                 this.state.questTier = 1;
                             } else if (this.state.questTier <= 1 && this.state.totalQuestsCompleted >= 15) {
@@ -1598,10 +1624,58 @@ const htmlContent = `<!DOCTYPE html>
                             this.replaceQuestSlot(idx);
                             this.generateQuests();
                             this.requestLayoutRebuild();
-                        });
-                    }
+                        }
+                    });
+                }
 
-                    this.mainContainer.add([cardBg, txt, btnHandIn, cardHitZone]);
+                this.mainContainer.add([cardBg, txt, btnHandIn, cardHitZone]);
+                this.contractCardViews.push({
+                    contract: c,
+                    idx: idx,
+                    cx: cx,
+                    y: y,
+                    cardW: cardW,
+                    cardH: cardH,
+                    cardBg: cardBg,
+                    txt: txt,
+                    btnHandIn: btnHandIn,
+                    cardHitZone: cardHitZone,
+                    outlineColor: outlineColor
+                });
+            });
+
+            this.updateContractsUI();
+        }
+
+        updateContractsUI() {
+            if (!this.contractCardViews || this.contractCardViews.length === 0) return;
+            this.contractCardViews.forEach(v => {
+                if (!v.contract || !v.cardBg || !v.btnHandIn || !v.cardBg.scene) return;
+                const c = v.contract;
+                if (c.isTutorial) {
+                    const isDone = (c.currentVal >= c.req);
+                    v.cardBg.clear();
+                    v.cardBg.fillStyle(isDone ? 0x1b5e20 : 0x1e293b, 0.95);
+                    v.cardBg.fillRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
+                    v.cardBg.lineStyle(2, isDone ? 0x00e676 : 0xffd700, 1);
+                    v.cardBg.strokeRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
+
+                    v.btnHandIn.setText(isDone ? '[ COMPLETE ]' : ('(' + c.currentVal + '/' + c.req + ')'));
+                    v.btnHandIn.setBackgroundColor(isDone ? '#00e676' : '#334155');
+                    v.btnHandIn.setColor(isDone ? '#000000' : '#ffd700');
+                } else {
+                    const current = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
+                    const canFulfill = current >= c.req;
+
+                    v.cardBg.clear();
+                    v.cardBg.fillStyle(canFulfill ? 0x1b5e20 : 0x222222, 0.95);
+                    v.cardBg.fillRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
+                    v.cardBg.lineStyle(canFulfill ? 3 : 2, canFulfill ? 0x00e676 : v.outlineColor, 1);
+                    v.cardBg.strokeRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
+
+                    v.btnHandIn.setText(canFulfill ? '[ TURN IN ]' : ('(' + current + '/' + c.req + ')'));
+                    v.btnHandIn.setBackgroundColor(canFulfill ? '#00e676' : '#424242');
+                    v.btnHandIn.setColor(canFulfill ? '#000000' : '#aaaaaa');
                 }
             });
         }
@@ -3239,13 +3313,14 @@ const htmlContent = `<!DOCTYPE html>
             }
 
             if (this.tipStockText) {
-                this.tipStockText.setText(\`\${this.state.tipStockpile}\`);
+                this.tipStockText.setText('' + this.state.tipStockpile);
             }
 
             if (this.bins) {
-                const counts = [this.state.resources.organic, this.state.resources.paper, this.state.resources.glass, this.state.resources.plastic];
-                this.bins.forEach((b, idx) => {
-                    if (b.countText) b.countText.setText(\`\${counts[idx]}\`);
+                this.bins.forEach(b => {
+                    if (b.countText && this.state.resources[b.id] !== undefined) {
+                        b.countText.setText('' + this.state.resources[b.id]);
+                    }
                 });
             }
 
@@ -3256,6 +3331,8 @@ const htmlContent = `<!DOCTYPE html>
                     this.tipSprite.setAlpha(1);
                 }
             }
+
+            this.updateContractsUI();
         }
     }
 
