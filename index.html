@@ -2369,6 +2369,26 @@
         }
 
         closeModal() {
+            if (this.modalWheelHandler) {
+                this.input.off('wheel', this.modalWheelHandler);
+                this.modalWheelHandler = null;
+            }
+            if (this.modalPointerDownHandler) {
+                this.input.off('pointerdown', this.modalPointerDownHandler);
+                this.modalPointerDownHandler = null;
+            }
+            if (this.modalPointerMoveHandler) {
+                this.input.off('pointermove', this.modalPointerMoveHandler);
+                this.modalPointerMoveHandler = null;
+            }
+            if (this.modalPointerUpHandler) {
+                this.input.off('pointerup', this.modalPointerUpHandler);
+                this.modalPointerUpHandler = null;
+            }
+            if (this.modalMaskGfx) {
+                this.modalMaskGfx.destroy();
+                this.modalMaskGfx = null;
+            }
             if (this.modalContainer) {
                 this.modalContainer.destroy(true);
                 this.modalContainer = null;
@@ -2376,9 +2396,12 @@
             this.activeModal = null;
         }
 
-        openModal(type, targetCategory = 'gate') {
+        openModal(type, targetCategory = 'gate', preserveScroll = false) {
             this.activeModal = type;
             this.activeUpgradeCategory = targetCategory;
+            if (!preserveScroll) {
+                this.upgradeScrollY = 0;
+            }
 
             if (this.state.tutorial.active && this.state.tutorial.step === 4) {
                 this.state.tutorial.visitedCategoriesSet.add(targetCategory);
@@ -2391,7 +2414,7 @@
             const w = this.scale.width; 
             const h = this.scale.height;
             const boxW = Math.min(w * 0.94, 520);
-            const modalH = h * 0.58;
+            const modalH = Math.min(h * 0.75, Math.max(350, h * 0.58));
 
             this.modalContainer = this.add.container(0, 0).setDepth(100);
 
@@ -2707,7 +2730,7 @@
                 backgroundColor: isGateSel ? '#0288d1' : '#2b2b2b',
                 color: isGateSel ? '#ffffff' : (hasGateAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
             }).setInteractive({ useHandCursor: true });
-            btnGate.on('pointerup', () => { this.activeUpgradeCategory = 'gate'; this.openModal('upgrades', 'gate'); });
+            btnGate.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'gate'; this.openModal('upgrades', 'gate'); });
             this.modalContainer.add(btnGate);
             currY += 28;
 
@@ -2718,7 +2741,7 @@
                 backgroundColor: isTipSel ? '#0288d1' : '#2b2b2b',
                 color: isTipSel ? '#ffffff' : (hasTipAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
             }).setInteractive({ useHandCursor: true });
-            btnTip.on('pointerup', () => { this.activeUpgradeCategory = 'tip'; this.openModal('upgrades', 'tip'); });
+            btnTip.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'tip'; this.openModal('upgrades', 'tip'); });
             this.modalContainer.add(btnTip);
             currY += 28;
 
@@ -2727,7 +2750,7 @@
             }).setInteractive({ useHandCursor: true });
             btnBinsHeader.on('pointerup', () => {
                 this.binsSubmenuOpen = !this.binsSubmenuOpen;
-                this.openModal('upgrades', this.activeUpgradeCategory);
+                this.openModal('upgrades', this.activeUpgradeCategory, true);
             });
             this.modalContainer.add(btnBinsHeader);
             currY += 26;
@@ -2752,6 +2775,7 @@
                     }).setInteractive({ useHandCursor: true });
 
                     subBtn.on('pointerup', () => {
+                        this.upgradeScrollY = 0;
                         this.activeUpgradeCategory = bCat.id;
                         this.openModal('upgrades', bCat.id);
                     });
@@ -2774,7 +2798,7 @@
                             }
                             this.state.activeTypes[bCat.typeId] = !isActive;
                             this.requestLayoutRebuild();
-                            this.openModal('upgrades', this.activeUpgradeCategory);
+                            this.openModal('upgrades', this.activeUpgradeCategory, true);
                         });
                         this.modalContainer.add(toggleBtn);
                     }
@@ -2791,8 +2815,29 @@
             const startX = boxLeft + sidebarW + 15;
             const upgradeList = this.getUpgradeListForCategory(this.activeUpgradeCategory);
 
+            // Viewport bounds for the upgrades list
+            const viewX = boxLeft + sidebarW + 2;
+            const viewY = 40;
+            const viewW = boxW - sidebarW - 4;
+            const viewBottomY = modalH - 38;
+            const viewH = Math.max(10, viewBottomY - viewY);
+
+            // Container for scrollable items
+            this.upgradeListContainer = this.add.container(0, 0);
+            this.modalContainer.add(this.upgradeListContainer);
+
+            // Mask so overflowing items stay inside the modal bounds
+            this.modalMaskGfx = this.make.graphics();
+            this.modalMaskGfx.fillStyle(0xffffff, 1);
+            this.modalMaskGfx.fillRect(viewX, viewY, viewW, viewH);
+            const mask = this.modalMaskGfx.createGeometryMask();
+            this.upgradeListContainer.setMask(mask);
+
+            const itemHeight = 48;
+            let totalDragDistance = 0;
+
             upgradeList.forEach((uItem, idx) => {
-                const uy = 44 + (idx * 48);
+                const uy = viewY + 6 + (idx * itemHeight);
                 const isLevelMet = (this.state.level >= uItem.reqLvl);
                 const isPrevUnlocked = (idx === 0) || (upgradeList[idx - 1].lvl > 0);
 
@@ -2802,20 +2847,21 @@
                         fontSize: '10.5px', style: 'bold', color: '#ff9800'
                     }).setOrigin(1, 0);
 
-                    this.modalContainer.add([nameTxt, lockBadge]);
+                    this.upgradeListContainer.add([nameTxt, lockBadge]);
                 } else if (!isPrevUnlocked) {
                     const nameTxt = this.add.text(startX, uy + 6, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
                     const prevLockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, '[ Need previous upgrade ]', {
                         fontSize: '10.5px', style: 'bold', color: '#ff9800'
                     }).setOrigin(1, 0);
 
-                    this.modalContainer.add([nameTxt, prevLockBadge]);
+                    this.upgradeListContainer.add([nameTxt, prevLockBadge]);
                 } else {
-                    const infoTxt = this.add.text(startX, uy, `${uItem.name}\n${uItem.desc}`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
+                    const infoTxt = this.add.text(startX, uy, `${uItem.name}
+${uItem.desc}`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
 
                     if (uItem.lvl >= uItem.max) {
                         const maxBadge = this.add.text(boxLeft + boxW - 35, uy + 6, `[ Lvl ${uItem.lvl}/${uItem.max} MAX ]`, { fontSize: '11px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
-                        this.modalContainer.add([infoTxt, maxBadge]);
+                        this.upgradeListContainer.add([infoTxt, maxBadge]);
                     } else {
                         const lvlBadgeStr = uItem.max > 1 ? `Lvl ${uItem.lvl}/${uItem.max} ` : '';
                         const btnBuy = this.add.text(boxLeft + boxW - 35, uy + 4, `${lvlBadgeStr}BUY (${uItem.cost})`, {
@@ -2825,17 +2871,98 @@
                         }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
 
                         if (uItem.canAfford) {
-                            btnBuy.on('pointerup', () => {
+                            btnBuy.on('pointerup', (pointer) => {
+                                if (totalDragDistance > 8) return;
+                                if (pointer.y < viewY || pointer.y > viewBottomY) return;
                                 uItem.action();
                                 if (this.modalWalletTxt) this.modalWalletTxt.setText('$' + this.state.money + ' | 🎟️' + this.state.questTokens);
                                 this.requestLayoutRebuild();
-                                this.openModal('upgrades', this.activeUpgradeCategory);
+                                this.openModal('upgrades', this.activeUpgradeCategory, true);
                             });
                         }
-                        this.modalContainer.add([infoTxt, btnBuy]);
+                        this.upgradeListContainer.add([infoTxt, btnBuy]);
                     }
                 }
             });
+
+            // Calculate scroll limits
+            const totalContentH = (upgradeList.length * itemHeight) + 16;
+            const maxScroll = Math.max(0, totalContentH - viewH);
+
+            this.upgradeScrollY = Phaser.Math.Clamp(this.upgradeScrollY || 0, -maxScroll, 0);
+            this.upgradeListContainer.y = this.upgradeScrollY;
+
+            let updateScrollThumb = () => {};
+
+            if (maxScroll > 0) {
+                const trackX = boxLeft + boxW - 14;
+                const trackY = viewY + 4;
+                const trackW = 5;
+                const trackH = viewH - 8;
+
+                const trackGfx = this.add.graphics();
+                trackGfx.fillStyle(0x222630, 0.85);
+                trackGfx.fillRoundedRect(trackX, trackY, trackW, trackH, 2.5);
+                this.modalContainer.add(trackGfx);
+
+                const thumbGfx = this.add.graphics();
+                const thumbH = Math.max(24, (viewH / totalContentH) * trackH);
+                this.modalContainer.add(thumbGfx);
+
+                updateScrollThumb = () => {
+                    thumbGfx.clear();
+                    const ratio = maxScroll > 0 ? (-this.upgradeScrollY / maxScroll) : 0;
+                    const thumbY = trackY + ratio * (trackH - thumbH);
+                    thumbGfx.fillStyle(0x4fc3f7, 0.9);
+                    thumbGfx.fillRoundedRect(trackX, thumbY, trackW, thumbH, 2.5);
+                };
+                updateScrollThumb();
+            }
+
+            let isDraggingList = false;
+            let dragStartY = 0;
+            let dragStartScroll = 0;
+
+            this.modalWheelHandler = (pointer, gameObjects, deltaX, deltaY) => {
+                if (maxScroll <= 0) return;
+                if (pointer.x >= boxLeft + sidebarW && pointer.x <= boxLeft + boxW &&
+                    pointer.y >= viewY && pointer.y <= viewBottomY) {
+                    this.upgradeScrollY = Phaser.Math.Clamp(this.upgradeScrollY - deltaY * 0.6, -maxScroll, 0);
+                    this.upgradeListContainer.y = this.upgradeScrollY;
+                    updateScrollThumb();
+                }
+            };
+            this.input.on('wheel', this.modalWheelHandler);
+
+            this.modalPointerDownHandler = (pointer) => {
+                if (maxScroll <= 0) return;
+                if (pointer.x >= boxLeft + sidebarW && pointer.x <= boxLeft + boxW &&
+                    pointer.y >= viewY && pointer.y <= viewBottomY) {
+                    isDraggingList = true;
+                    dragStartY = pointer.y;
+                    dragStartScroll = this.upgradeScrollY;
+                    totalDragDistance = 0;
+                }
+            };
+
+            this.modalPointerMoveHandler = (pointer) => {
+                if (!isDraggingList) return;
+                const dy = pointer.y - dragStartY;
+                if (pointer.prevPosition) {
+                    totalDragDistance += Math.abs(pointer.position.y - pointer.prevPosition.y);
+                }
+                this.upgradeScrollY = Phaser.Math.Clamp(dragStartScroll + dy, -maxScroll, 0);
+                this.upgradeListContainer.y = this.upgradeScrollY;
+                updateScrollThumb();
+            };
+
+            this.modalPointerUpHandler = () => {
+                isDraggingList = false;
+            };
+
+            this.input.on('pointerdown', this.modalPointerDownHandler);
+            this.input.on('pointermove', this.modalPointerMoveHandler);
+            this.input.on('pointerup', this.modalPointerUpHandler);
         }
 
         renderDecorationsModal(w, modalH, boxW) {
