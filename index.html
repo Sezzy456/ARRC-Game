@@ -500,19 +500,22 @@
                 loop: true
             });
 
-            // Auto-Sort Loop (Only sorts from excess queue > 10 items, never touching the 10 visible items)
+            // Auto-Sort Loop: Automatically sorts from right-to-left (tail of queue toward head)
             this.time.addEvent({
                 delay: 50,
                 callback: () => {
-                    const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && this.trashQueue.length > 10;
+                    const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && this.trashQueue.length > 0;
                     if (canAutoSort) {
                         this.state.autoSortTimer += 50;
                         const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
                         this.drawAutoSortProgress(sortProgress);
                         if (sortProgress >= 1) {
                             const lastIdx = this.trashQueue.length - 1;
-                            this.sortHeadTrash(this.trashQueue[lastIdx].type, lastIdx);
-                            this.state.autoSortTimer = 0;
+                            // Ensure we don't snatch an item currently being dragged
+                            if (!this.draggedItem || this.draggedItem !== this.trashQueue[lastIdx]) {
+                                this.sortHeadTrash(this.trashQueue[lastIdx].type, lastIdx);
+                                this.state.autoSortTimer = 0;
+                            }
                         }
                     } else {
                         this.drawAutoSortProgress(0);
@@ -753,7 +756,10 @@
                 const newMult = (currentMult === 1) ? 2 : 4;
                 headItem.multiplier = newMult;
 
-                const newContainer = this.createItemGraphic(headItem.type, '', newMult, headItem.spriteKey);
+                const fixedKey = headItem.spriteKey || (headItem.container && headItem.container.spriteKey);
+                headItem.spriteKey = fixedKey;
+
+                const newContainer = this.createItemGraphic(headItem.type, '', newMult, fixedKey);
                 newContainer.setPosition(headItem.container.x, headItem.container.y);
                 headItem.container.destroy();
                 headItem.container = newContainer;
@@ -843,22 +849,41 @@
             const w = this.scale.width;
             const y = this.gatePos ? this.gatePos.y + 20 : 620;
 
-            const busContainer = this.add.container(-120, y).setDepth(15);
+            const busContainer = this.add.container(-140, y).setDepth(200);
             this.activeBusContainer = busContainer;
             
             const busGfx = this.add.graphics();
             busGfx.fillStyle(0xff6f00, 1);
-            busGfx.fillRoundedRect(0, 0, 110, 36, 6);
+            busGfx.fillRoundedRect(0, 0, 126, 44, 8);
             busGfx.lineStyle(3, 0xffeb3b, 1);
-            busGfx.strokeRoundedRect(0, 0, 110, 36, 6);
+            busGfx.strokeRoundedRect(0, 0, 126, 44, 8);
 
-            const labelText = this.add.text(55, 18, '🚌 BUS (B/+10)', {
+            // Windows
+            busGfx.fillStyle(0x81d4fa, 1);
+            busGfx.fillRoundedRect(10, 8, 22, 14, 3);
+            busGfx.fillRoundedRect(36, 8, 22, 14, 3);
+            busGfx.fillRoundedRect(62, 8, 22, 14, 3);
+            busGfx.fillRoundedRect(88, 8, 26, 14, 3);
+
+            // Wheels
+            busGfx.fillStyle(0x212121, 1);
+            busGfx.fillCircle(24, 44, 7);
+            busGfx.fillCircle(102, 44, 7);
+
+            const labelText = this.add.text(63, 31, '🚌 +10 (TAP/B)', {
                 fontSize: '11px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
             busContainer.add([busGfx, labelText]);
-            busContainer.setSize(130, 56);
-            busContainer.setInteractive(new Phaser.Geom.Rectangle(-10, -10, 130, 56), Phaser.Geom.Rectangle.Contains);
+
+            // Generous touch hit area (190px wide x 110px tall) so it's super easy to tap on mobile and PC!
+            const hitArea = new Phaser.Geom.Rectangle(-32, -30, 190, 110);
+            busContainer.setSize(190, 110);
+            busContainer.setInteractive({
+                hitArea: hitArea,
+                hitAreaCallback: Phaser.Geom.Rectangle.Contains,
+                useHandCursor: true
+            });
 
             let busClicked = false;
 
@@ -871,7 +896,7 @@
 
                 const floatTxt = this.add.text(busContainer.x, busContainer.y - 20, '🚌 +10 RUBBISH! 🚌', {
                     fontSize: '18px', style: 'bold', color: '#ff9800', backgroundColor: '#000000', padding: 6
-                }).setOrigin(0.5).setDepth(30);
+                }).setOrigin(0.5).setDepth(230);
 
                 if (this.tweens && this.tweens.add) {
                     this.tweens.add({
@@ -903,12 +928,12 @@
             busContainer.on('pointerdown', handleCashIn);
             busContainer.on('pointerup', handleCashIn);
 
-            // Bus moves across screen over 9 seconds
+            // Bus cruises smoothly across screen over 12.5 seconds
             if (this.tweens && this.tweens.add) {
                 this.tweens.add({
                     targets: busContainer,
-                    x: w + 140,
-                    duration: 9000,
+                    x: w + 160,
+                    duration: 12500,
                     onComplete: () => {
                         if (busContainer && busContainer.active) busContainer.destroy();
                         this.activeBusContainer = null;
@@ -1436,7 +1461,7 @@
 
             this.autoGateGfx = this.add.graphics();
             this.autoQueueGfx = this.add.graphics();
-            this.autoSortGfx = this.add.graphics();
+            this.autoSortGfx = this.add.graphics().setDepth(25);
             this.longPressGfx = this.add.graphics().setDepth(10);
             this.tutorialIndicatorsGfx = this.add.graphics().setDepth(25);
 
@@ -2086,8 +2111,9 @@
             if (!this.state.unlockedAutoSort || this.trashQueue.length === 0) return;
 
             const lastIdx = this.trashQueue.length - 1;
-            const targetX = this.queueStartX + (lastIdx * 56);
-            const targetY = this.queueY;
+            const lastItem = this.trashQueue[lastIdx];
+            const targetX = (lastItem && lastItem.container) ? lastItem.container.x : (this.queueStartX + (lastIdx * 56));
+            const targetY = (lastItem && lastItem.container) ? lastItem.container.y : this.queueY;
             if (progress > 0) {
                 this.autoSortGfx.lineStyle(3, 0x00e676, 1);
                 this.autoSortGfx.beginPath();
@@ -2263,7 +2289,9 @@
 
             this.trashQueue.forEach((item, index) => {
                 if (!item.container || !item.container.scene) {
-                    item.container = this.createItemGraphic(item.type, null, item.multiplier || 1);
+                    const fixedKey = item.spriteKey || (item.container && item.container.spriteKey);
+                    item.spriteKey = fixedKey;
+                    item.container = this.createItemGraphic(item.type, null, item.multiplier || 1, fixedKey);
                 }
 
                 item.container.setScale(sFactor);
@@ -2540,7 +2568,8 @@
             const w = this.scale.width; 
             const h = this.scale.height;
             const boxW = Math.min(w * 0.94, 520);
-            const modalH = Math.min(h * 0.75, Math.max(350, h * 0.58));
+            const maxModalBottom = this.queueY ? (this.queueY - 65) : (h * 0.44);
+            const modalH = Math.round(Math.min(maxModalBottom, Math.min(h * 0.45, 365)));
 
             this.modalContainer = this.add.container(0, 0).setDepth(100);
 
