@@ -70,7 +70,7 @@ const htmlContent = `<!DOCTYPE html>
     const BIN_SPRITE_CONFIG = {
         frameWidth: 743,   // Native width of each frame in the spritesheet
         frameHeight: 997,  // Native height of each frame in the spritesheet
-        scale: 0.068,      // Scale factor (~50.5px wide x ~67.8px tall, unconfined 743:997 aspect ratio)
+        scale: 0.105,      // Enlarged scale (~78px wide x ~105px tall, unconfined 743:997 aspect ratio)
         animFrameRate: 20  // Animation speed (20 frames per second)
     };
 
@@ -124,10 +124,12 @@ const htmlContent = `<!DOCTYPE html>
                 unlockedAutoSort: false,
                 autoSortDelay: 8000,
                 autoSortTimer: 0,
+                autoSortPaused: false,
 
                 // Sanitiser Station Stats
                 unlockedSanitiser: false,
                 sanitiserCooldown: 0,
+                sanitiserMaxCooldown: 2500,
 
                 // Pet Queue Helpers
                 pets: {
@@ -154,7 +156,7 @@ const htmlContent = `<!DOCTYPE html>
                 },
 
                 // Bus Rush Stats
-                busRushUnlocked: false,
+                busRushUnlocked: true,
                 busRushInterval: 25000,
 
                 // Upgrades Tracker
@@ -267,6 +269,11 @@ const htmlContent = `<!DOCTYPE html>
                     fontFamily: "'Outfit', 'Segoe UI', system-ui, -apple-system, sans-serif"
                 }, style);
 
+                // High-DPI Ultra Sharp Text: 3x-4x high-DPI canvas buffer prevents any fuzziness
+                if (!s.resolution) {
+                    s.resolution = Math.max(3, Math.ceil(window.devicePixelRatio || 1) * 2);
+                }
+
                 // Fix Phaser bug: Phaser uses fontStyle ('bold'), ignoring style ('bold')
                 if (s.style && !s.fontStyle) {
                     s.fontStyle = s.style;
@@ -283,10 +290,30 @@ const htmlContent = `<!DOCTYPE html>
 
                 // Prevent edge glyph clipping on small labels & icons
                 if (!s.padding) {
-                    s.padding = { x: 2, y: 1 };
+                    s.padding = { x: 3, y: 2 };
                 }
 
-                return origAddText(Math.round(x), Math.round(y), text, s);
+                const txtObj = origAddText(Math.round(x), Math.round(y), text, s);
+
+                // Pixel-snapping hooks: Snap origin offsets to exact whole integer screen pixels!
+                // This eliminates fractional pixel boundary blur (the root cause of fuzzy centered labels)
+                const origSetOrigin = txtObj.setOrigin.bind(txtObj);
+                txtObj.setOrigin = function(ox, oy) {
+                    origSetOrigin(ox, oy);
+                    this.displayOriginX = Math.round(this.displayOriginX);
+                    this.displayOriginY = Math.round(this.displayOriginY);
+                    return this;
+                };
+
+                const origSetText = txtObj.setText.bind(txtObj);
+                txtObj.setText = function(val) {
+                    origSetText(val);
+                    this.displayOriginX = Math.round(this.displayOriginX);
+                    this.displayOriginY = Math.round(this.displayOriginY);
+                    return this;
+                };
+
+                return txtObj;
             };
         }
 
@@ -481,11 +508,12 @@ const htmlContent = `<!DOCTYPE html>
                 loop: true
             });
 
-            // Auto-Sort Loop
+            // Auto-Sort Loop (Only sorts from excess queue > 10 items, never touching the 10 visible items)
             this.time.addEvent({
                 delay: 50,
                 callback: () => {
-                    if (this.state.unlockedAutoSort && this.trashQueue.length > 0) {
+                    const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && this.trashQueue.length > 10;
+                    if (canAutoSort) {
                         this.state.autoSortTimer += 50;
                         const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
                         this.drawAutoSortProgress(sortProgress);
@@ -564,6 +592,11 @@ const htmlContent = `<!DOCTYPE html>
                 this.renderDumpsterFireBar();
             } else if (this.state) {
                 this.renderDumpsterFireBar();
+            }
+
+            if (this.state && this.state.sanitiserCooldown > 0) {
+                this.state.sanitiserCooldown = Math.max(0, this.state.sanitiserCooldown - delta);
+                this.updateSanitiserBtnUI();
             }
 
             if (this.arcadeState && this.arcadeState.active) {
@@ -696,17 +729,27 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         updateSanitiserBtnUI() {
-            if (!this.btnSanitiser || !this.btnSanitiser.active) return;
-            const cdSecs = Math.ceil(this.state.sanitiserCooldown / 1000);
-            const headItem = this.trashQueue && this.trashQueue[0];
-            const currentMult = headItem ? (headItem.multiplier || 1) : 1;
-            const targetMult = (currentMult === 1) ? 2 : 4;
-            const btnLabel = cdSecs > 0 ? ('🧪 SAN ' + targetMult + 'X\\n(' + cdSecs + 's)') : (currentMult >= 4 ? '🧪 MAX\\n(4X)' : ('🧪 SAN\\n' + targetMult + 'X'));
-            this.btnSanitiser.setText(btnLabel);
-            this.btnSanitiser.setStyle({
-                backgroundColor: cdSecs > 0 ? '#424242' : (currentMult >= 4 ? '#555555' : '#2e7d32'),
-                color: cdSecs > 0 ? '#aaaaaa' : '#ffffff'
-            });
+            if (!this.sanitiserFillGfx || !this.sanitiserFillGfx.scene) return;
+            const maxCd = this.state.sanitiserMaxCooldown || 2500;
+            const cd = this.state.sanitiserCooldown || 0;
+            const pct = Math.min(1, Math.max(0, 1 - (cd / maxCd)));
+            const btnW = 104;
+            const btnH = 26;
+
+            this.sanitiserFillGfx.clear();
+            if (pct > 0) {
+                // Vibrant green fill grows smoothly until full
+                this.sanitiserFillGfx.fillStyle(pct >= 1 ? 0x2e7d32 : 0x388e3c, 1);
+                this.sanitiserFillGfx.fillRoundedRect(0, 0, Math.max(4, Math.round(btnW * pct)), btnH, 5);
+            }
+
+            if (this.btnSanitiserText) {
+                const headItem = this.trashQueue && this.trashQueue[0];
+                const currentMult = headItem ? (headItem.multiplier || 1) : 1;
+                const targetMult = (currentMult === 1) ? 2 : 4;
+                const label = (currentMult >= 4) ? '🧪 MAX (4x)' : ('🧪 Sanitise x' + targetMult);
+                this.btnSanitiserText.setText(label);
+            }
         }
 
         triggerSanitiseAction() {
@@ -724,7 +767,7 @@ const htmlContent = `<!DOCTYPE html>
                 headItem.container = newContainer;
                 if (this.mainContainer) this.mainContainer.add(newContainer);
 
-                // Set 2.5-second cooldown
+                this.state.sanitiserMaxCooldown = 2500;
                 this.state.sanitiserCooldown = 2500;
                 this.updateSanitiserBtnUI();
                 this.renderHorizontalQueue();
@@ -1098,8 +1141,6 @@ const htmlContent = `<!DOCTYPE html>
             const scaleFactor = Math.min(1, height / targetMinHeight);
             const logicalHeight = Math.max(height, targetMinHeight);
 
-            this.renderDecorationsGraphics(width, logicalHeight);
-
             const topBarY = isMobile ? 30 : 35;
             const questY = topBarY + 85;
 
@@ -1108,8 +1149,10 @@ const htmlContent = `<!DOCTYPE html>
             }
 
             const bottomY = isMobile ? logicalHeight - 190 : logicalHeight - 135;
-            const binY = bottomY - 78;
-            const queueY = binY - 72;
+            const binBaselineY = bottomY - 34; // Exact bottom baseline anchor for bins
+            const binH = 105;
+            const binCenterY = binBaselineY - (binH / 2);
+            const queueY = binBaselineY - 170; // Raised by 40px so conveyor items never overlap bin titles!
 
             const workshopHeaderY = questY + (this.state.tutorial.active ? 195 : 95);
             const conveyorY = workshopHeaderY + 24;
@@ -1126,12 +1169,44 @@ const htmlContent = `<!DOCTYPE html>
             envGfx.fillStyle(0x90caf9, 0.45);
             envGfx.fillRect(0, splitY - 45, width, 45);
 
-            // Ground: Starts as earthy dirt brown; transitions to lush green when grass decoration is bought!
+            // Ground: Starts as earthy dirt brown; transitions to natural meadow when grass decoration is bought!
             if (this.state.hasGrass) {
-                envGfx.fillStyle(0x4caf50, 1); // Lush green lawn
+                envGfx.fillStyle(0x3e7b42, 1); // Natural meadow green (soft, grounded, not neon)
                 envGfx.fillRect(0, splitY, width, logicalHeight - splitY);
-                envGfx.fillStyle(0x43a047, 1); // Grass rim
+                envGfx.fillStyle(0x336936, 1); // Deep meadow rim
                 envGfx.fillRect(0, splitY, width, 14);
+
+                // Grass variety: subtle tufts of softer green splattered across the lawn
+                envGfx.fillStyle(0x558b2f, 0.45);
+                for (let gx = 18; gx < width - 18; gx += 42) {
+                    const gy1 = splitY + 28 + ((gx * 7) % 65);
+                    const gy2 = splitY + 110 + ((gx * 13) % 80);
+                    envGfx.fillRoundedRect(gx, gy1, 14, 5, 2);
+                    envGfx.fillRoundedRect(gx + 12, gy2, 18, 6, 3);
+                }
+
+                // Cute tiny wildflower accents dotted across the lawn (white daisies, pastel pink, buttercups)
+                for (let fx = 32; fx < width - 32; fx += 58) {
+                    const fy = splitY + 20 + ((fx * 17) % 130);
+                    const flowerType = (fx % 3);
+                    if (flowerType === 0) {
+                        // White daisy with tiny yellow center
+                        envGfx.fillStyle(0xffffff, 0.9);
+                        envGfx.fillCircle(fx, fy, 3);
+                        envGfx.fillStyle(0xffd54f, 1);
+                        envGfx.fillCircle(fx, fy, 1.2);
+                    } else if (flowerType === 1) {
+                        // Soft pastel pink blossom
+                        envGfx.fillStyle(0xf48fb1, 0.9);
+                        envGfx.fillCircle(fx, fy, 2.5);
+                        envGfx.fillStyle(0xffffff, 1);
+                        envGfx.fillCircle(fx, fy, 1);
+                    } else {
+                        // Buttercup gold
+                        envGfx.fillStyle(0xffeb3b, 0.95);
+                        envGfx.fillCircle(fx, fy, 2.5);
+                    }
+                }
             } else {
                 envGfx.fillStyle(0x5d4037, 1); // Rich soil brown
                 envGfx.fillRect(0, splitY, width, logicalHeight - splitY);
@@ -1139,6 +1214,9 @@ const htmlContent = `<!DOCTYPE html>
                 envGfx.fillRect(0, splitY, width, 14);
             }
             this.mainContainer.add(envGfx);
+
+            // Render decorations AFTER the environment so they are never covered up!
+            this.renderDecorationsGraphics(width, logicalHeight, splitY);
 
             const activeBinCount = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length;
             const binSpacing = Math.min(width * (1 / (activeBinCount + 0.8)), 88);
@@ -1205,55 +1283,59 @@ const htmlContent = `<!DOCTYPE html>
             this.queueHighlight.strokeRect(-28, -28, 56, 56);
             this.queueHighlight.setVisible(false);
 
-            const hasQueueUpgrade = this.hasCategoryAffordable('tip');
-            const btnCapText = hasQueueUpgrade ? '▲ Queue Upgrades (!)' : '▲ Queue Upgrades';
+            this.mainContainer.add([this.queueCounterText, this.queueHighlight]);
 
-            this.btnUpgradeCap = this.add.text(width * 0.88, queueY, btnCapText, {
-                fontSize: '10.5px', style: 'bold',
-                backgroundColor: hasQueueUpgrade ? '#ff9800' : '#333333',
-                color: hasQueueUpgrade ? '#000000' : '#ffffff', padding: { x: 6, y: 4 }
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+            // Toolbar above conveyor: Sanitiser station, Pet helpers & Auto-Sort toggle
+            const toolbarY = queueY - 48;
 
-            this.btnUpgradeCap.on('pointerup', () => {
-                this.openModal('upgrades', 'tip');
-            });
+            if (this.state.unlockedSanitiser) {
+                const sBoxW = 104;
+                const sBoxH = 26;
+                this.sanitiserContainer = this.add.container(startBinX - 20, toolbarY).setDepth(20);
 
-            // SANITISER & PET CLEANER TOOLBAR
-            if (this.state.unlockedSanitiser && this.trashQueue.length > 0) {
-                const cdSecs = Math.ceil(this.state.sanitiserCooldown / 1000);
-                const headItem = this.trashQueue[0];
+                this.sanitiserBgGfx = this.add.graphics();
+                this.sanitiserBgGfx.fillStyle(0x1e293b, 1);
+                this.sanitiserBgGfx.fillRoundedRect(0, 0, sBoxW, sBoxH, 5);
+                this.sanitiserBgGfx.lineStyle(1.5, 0x334155, 1);
+                this.sanitiserBgGfx.strokeRoundedRect(0, 0, sBoxW, sBoxH, 5);
+
+                this.sanitiserFillGfx = this.add.graphics();
+
+                const headItem = this.trashQueue && this.trashQueue[0];
                 const currentMult = headItem ? (headItem.multiplier || 1) : 1;
                 const targetMult = (currentMult === 1) ? 2 : 4;
-                const btnLabel = cdSecs > 0 ? ('🧪 SAN ' + targetMult + 'X\\n(' + cdSecs + 's)') : (currentMult >= 4 ? '🧪 MAX\\n(4X)' : ('🧪 SAN\\n' + targetMult + 'X'));
+                const initLabel = (currentMult >= 4) ? '🧪 MAX (4x)' : ('🧪 Sanitise x' + targetMult);
 
-                this.btnSanitiser = this.add.text(startBinX, queueY - 68, btnLabel, {
-                    fontSize: '10.5px', style: 'bold', align: 'center',
-                    backgroundColor: cdSecs > 0 ? '#424242' : (currentMult >= 4 ? '#555555' : '#2e7d32'),
-                    color: cdSecs > 0 ? '#aaaaaa' : '#ffffff', padding: { x: 8, y: 7 }
-                }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
+                this.btnSanitiserText = this.add.text(sBoxW / 2, sBoxH / 2, initLabel, {
+                    fontSize: '10.5px', style: 'bold', color: '#ffffff'
+                }).setOrigin(0.5);
 
-                this.btnSanitiser.on('pointerup', () => {
-                    this.triggerSanitiseAction();
-                });
-                this.mainContainer.add(this.btnSanitiser);
+                this.sanitiserContainer.add([this.sanitiserBgGfx, this.sanitiserFillGfx, this.btnSanitiserText]);
+                this.sanitiserContainer.setSize(sBoxW, sBoxH);
+                this.sanitiserContainer.setInteractive(new Phaser.Geom.Rectangle(0, 0, sBoxW, sBoxH), Phaser.Geom.Rectangle.Contains);
+                this.sanitiserContainer.on('pointerup', () => this.triggerSanitiseAction());
+
+                this.mainContainer.add(this.sanitiserContainer);
+                this.updateSanitiserBtnUI();
             }
 
-            // Pet Helper Buttons (positioned directly to the right of Sanitiser button)
+            // Pet Helper Buttons
             const petDefs = [
-                { id: 'dog', name: 'Dog', icon: '🐶', targetType: 'paper' },
-                { id: 'chicken', name: 'Chicken', icon: '🐔', targetType: 'organic' },
-                { id: 'turtle', name: 'Turtle', icon: '🐢', targetType: 'plastic' },
-                { id: 'flashlight', name: 'Torch', icon: '🔦', targetType: 'glass' },
-                { id: 'cat', name: 'Cat', icon: '🐱', targetType: 'fabric' },
-                { id: 'magnet', name: 'Magnet', icon: '🧲', targetType: 'metal' }
+                { id: 'dog', name: 'Dog', icon: '🐶', targetType: 'paper', col: '#2196f3' },
+                { id: 'chicken', name: 'Chicken', icon: '🐔', targetType: 'organic', col: '#4caf50' },
+                { id: 'turtle', name: 'Turtle', icon: '🐢', targetType: 'plastic', col: '#ffeb3b' },
+                { id: 'flashlight', name: 'Torch', icon: '🔦', targetType: 'glass', col: '#9c27b0' },
+                { id: 'cat', name: 'Cat', icon: '🐱', targetType: 'fabric', col: '#e91e63' },
+                { id: 'magnet', name: 'Magnet', icon: '🧲', targetType: 'metal', col: '#9e9e9e' }
             ];
 
+            const petStartX = this.state.unlockedSanitiser ? (startBinX + 96) : startBinX;
             let petIdx = 0;
             petDefs.forEach(p => {
                 if (this.state.pets[p.id]) {
-                    const px = startBinX + 54 + (petIdx * 42);
-                    const btnPet = this.add.text(px, queueY - 68, p.icon, {
-                        fontSize: '16px', backgroundColor: '#1e293b', padding: { x: 6, y: 6 }
+                    const px = petStartX + (petIdx * 42);
+                    const btnPet = this.add.text(px, toolbarY + 13, p.icon, {
+                        fontSize: '15px', backgroundColor: '#1e293b', padding: { x: 6, y: 4 }
                     }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
 
                     btnPet.on('pointerup', () => {
@@ -1264,7 +1346,21 @@ const htmlContent = `<!DOCTYPE html>
                 }
             });
 
-            this.mainContainer.add([this.queueCounterText, this.btnUpgradeCap, this.queueHighlight]);
+            // Auto-Sort Pause/Resume Toggle
+            if (this.state.unlockedAutoSort) {
+                const autoSortLabel = this.state.autoSortPaused ? '▶️ Auto-Sort: OFF' : '⏸️ Auto-Sort: ON';
+                const btnAutoSort = this.add.text(width * 0.88, toolbarY + 13, autoSortLabel, {
+                    fontSize: '10px', style: 'bold',
+                    backgroundColor: this.state.autoSortPaused ? '#374151' : '#1e3a8a',
+                    color: '#ffffff', padding: { x: 7, y: 4 }
+                }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
+
+                btnAutoSort.on('pointerup', () => {
+                    this.state.autoSortPaused = !this.state.autoSortPaused;
+                    this.requestLayoutRebuild();
+                });
+                this.mainContainer.add(btnAutoSort);
+            }
 
             // 4. BINS (Includes animated Green, Blue, Purple & Yellow wheelie bins!)
             this.bins = [];
@@ -1272,7 +1368,7 @@ const htmlContent = `<!DOCTYPE html>
                 { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', count: this.state.resources.organic, sheetKey: 'bin_green_sheet', animKey: 'bin_green_anim' },
                 { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', count: this.state.resources.paper, sheetKey: 'bin_blue_sheet', animKey: 'bin_blue_anim' },
                 { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', count: this.state.resources.glass, sheetKey: 'bin_purple_sheet', animKey: 'bin_purple_anim' },
-                { id: 'plastic', key: '4', name: 'PLAST', sprite: 'bin_yellow', count: this.state.resources.plastic, sheetKey: 'bin_yellow_sheet', animKey: 'bin_yellow_anim' }
+                { id: 'plastic', key: '4', name: 'PLASTIC', sprite: 'bin_yellow', count: this.state.resources.plastic, sheetKey: 'bin_yellow_sheet', animKey: 'bin_yellow_anim' }
             ];
             if (this.state.activeTypes.metal) {
                 binData.push({ id: 'metal', key: '5', name: 'METAL', sprite: 'bin_metal', count: this.state.resources.metal });
@@ -1282,84 +1378,69 @@ const htmlContent = `<!DOCTYPE html>
             }
 
             binData.forEach((b, idx) => {
-                const bx = startBinX + (idx * binSpacing);
+                const bx = Math.round(startBinX + (idx * binSpacing));
                 const isSheet = !!(b.sheetKey && this.textures.exists(b.sheetKey));
                 let sprite;
                 if (isSheet) {
-                    sprite = this.add.sprite(bx, binY, b.sheetKey, 0).setScale(BIN_SPRITE_CONFIG.scale).setInteractive({ useHandCursor: true });
+                    sprite = this.add.sprite(bx, binBaselineY, b.sheetKey, 0)
+                        .setOrigin(0.5, 1)
+                        .setScale(BIN_SPRITE_CONFIG.scale)
+                        .setInteractive({ useHandCursor: true });
                 } else {
-                    sprite = this.add.sprite(bx, binY, b.sprite).setInteractive({ useHandCursor: true });
+                    sprite = this.add.sprite(bx, binBaselineY, b.sprite)
+                        .setOrigin(0.5, 1)
+                        .setDisplaySize(78, binH)
+                        .setInteractive({ useHandCursor: true });
                 }
 
-                const labelY = isSheet ? (binY - 38) : (binY - 32);
+                const labelY = binBaselineY - binH - 12;
                 const label = this.add.text(bx, labelY, '[' + b.key + '] ' + b.name, { fontSize: '11px', color: '#fff', style: 'bold' }).setOrigin(0.5);
-                const countY = isSheet ? (binY + 8) : (binY + 4);
+                const countY = binBaselineY - 45;
                 const countText = this.add.text(bx, countY, '' + b.count, {
-                    fontSize: '15px', color: '#ffffff', stroke: '#000000', strokeThickness: 3, style: 'bold'
+                    fontSize: '16px', color: '#ffffff', stroke: '#000000', strokeThickness: 4, style: 'bold'
                 }).setOrigin(0.5).setDepth(2);
-
-                const hasAffordableBinUp = this.hasCategoryAffordable(b.id + '_shop');
-                const btnUpY = isSheet ? (binY + 36) : (binY + 28);
-                const btnBinUp = this.add.text(bx, btnUpY, hasAffordableBinUp ? '▲ (!)' : '▲', {
-                    fontSize: '12px', style: 'bold', color: '#ffd700', backgroundColor: '#222', padding: {x: 6, y: 2}
-                }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-                btnBinUp.on('pointerup', () => {
-                    this.openModal('upgrades', b.id + '_shop');
-                });
 
                 const binHighlightGfx = this.add.graphics();
                 binHighlightGfx.lineStyle(3, 0xffd700, 1);
-                if (isSheet) {
-                    binHighlightGfx.strokeRoundedRect(bx - 28, binY - 36, 56, 72, 6);
-                } else {
-                    binHighlightGfx.strokeRect(bx - 26, binY - 26, 52, 52);
-                }
+                binHighlightGfx.strokeRoundedRect(bx - 42, binBaselineY - binH - 4, 84, binH + 8, 8);
                 binHighlightGfx.setVisible(false);
 
                 sprite.on('pointerdown', () => this.sortHeadTrash(b.id, 0));
                 if (b.animKey) {
                     sprite.on('animationcomplete', () => {
                         sprite.setFrame(0);
+                        sprite.setOrigin(0.5, 1);
                         sprite.setScale(BIN_SPRITE_CONFIG.scale);
                     });
                 }
-                this.bins.push({ sprite, id: b.id, x: bx, y: binY, countText, highlightGfx: binHighlightGfx, btnBinUp, sheetKey: b.sheetKey, animKey: b.animKey });
-                this.mainContainer.add([sprite, label, countText, btnBinUp, binHighlightGfx]);
+                this.bins.push({ sprite, id: b.id, x: bx, y: binCenterY, baselineY: binBaselineY, countText, highlightGfx: binHighlightGfx, sheetKey: b.sheetKey, animKey: b.animKey });
+                this.mainContainer.add([sprite, label, countText, binHighlightGfx]);
             });
 
             // Streak Score Text & Dumpster Fire Bar Setup
             this.dumpsterBarGfx = this.add.graphics();
-            const barStartX = this.bins[0].x - 26;
+            const barStartX = this.bins[0].x - 38;
             const lastBinIdx = Math.min(this.bins.length - 1, 3);
-            const barEndX = this.bins[lastBinIdx].x + 26;
-            const barCenter = (barStartX + barEndX) / 2;
+            const barEndX = this.bins[lastBinIdx].x + 38;
+            const barCenter = Math.round((barStartX + barEndX) / 2);
 
             // Permanent Responsive Streak & High Score Badge
-            this.dumpsterStreakText = this.add.text(width / 2, binY + 58, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
+            this.dumpsterStreakText = this.add.text(Math.round(width / 2), binBaselineY + 36, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
                 fontSize: '12px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 4 }
             }).setOrigin(0.5);
 
-            this.dumpsterFireBanner = this.add.text(barCenter, binY + 78, '🔥 DUMPSTER FIRE (2X TOKENS) 🔥', {
+            this.dumpsterFireBanner = this.add.text(barCenter, binBaselineY + 56, '🔥 DUMPSTER FIRE (2X TOKENS) 🔥', {
                 fontSize: '11px', style: 'bold', color: '#ffffff', backgroundColor: '#ff3d00', padding: { x: 8, y: 2 }
             }).setOrigin(0.5).setVisible(false);
 
             this.mainContainer.add([this.dumpsterBarGfx, this.dumpsterStreakText, this.dumpsterFireBanner]);
 
             // 5. GATE & TIP
-            this.gatePos = { x: width * 0.35, y: bottomY };
-            this.tipPos = { x: width * 0.65, y: bottomY };
+            this.gatePos = { x: Math.round(width * 0.35), y: bottomY };
+            this.tipPos = { x: Math.round(width * 0.65), y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
             this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE [C]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
-
-            // GATE QUICK UPGRADE: Positioned cleanly on the RIGHT side of the Gate!
-            const hasGateAffordable = this.hasCategoryAffordable('gate');
-            const btnGateUpArrow = this.add.text(this.gatePos.x + 48, bottomY - 18, hasGateAffordable ? '▲ (!)' : '▲', {
-                fontSize: '13px', style: 'bold', color: '#ffd700', backgroundColor: '#222', padding: { x: 6, y: 3 }
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerup', () => {
-                this.openModal('upgrades', 'gate');
-            });
 
             this.autoGateGfx = this.add.graphics();
             this.autoQueueGfx = this.add.graphics();
@@ -1373,21 +1454,14 @@ const htmlContent = `<!DOCTYPE html>
             this.tipLabel = this.add.text(this.tipPos.x, bottomY + 38, 'THE TIP [SPACE]', {
                 fontSize: '11px', style: 'bold', color: '#ffffff', backgroundColor: '#111827', padding: { x: 6, y: 3 }
             }).setOrigin(0.5);
-            
-            const hasTipAffordable = this.hasCategoryAffordable('tip');
-            const btnTipUpArrow = this.add.text(this.tipPos.x + 45, bottomY - 18, hasTipAffordable ? '▲ (!)' : '▲', {
-                fontSize: '13px', style: 'bold', color: '#ffd700', backgroundColor: '#222', padding: 4
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true }).on('pointerup', () => {
-                this.openModal('upgrades', 'tip');
-            });
 
-            this.tipStockText = this.add.text(this.tipPos.x, bottomY, \`\${this.state.tipStockpile}\`, { fontSize: '18px', color: '#000000', style: 'bold' }).setOrigin(0.5);
+            this.tipStockText = this.add.text(this.tipPos.x, bottomY, '' + this.state.tipStockpile, { fontSize: '18px', color: '#000000', style: 'bold' }).setOrigin(0.5);
 
             this.setupLongPress(this.tipSprite, 'tip');
 
             this.mainContainer.add([
-                this.gateSprite, this.gateText, btnGateUpArrow, this.autoGateGfx, this.autoQueueGfx, this.autoSortGfx,
-                this.tipSprite, this.tipLabel, btnTipUpArrow, this.tipStockText, this.longPressGfx, this.tutorialIndicatorsGfx
+                this.gateSprite, this.gateText, this.autoGateGfx, this.autoQueueGfx, this.autoSortGfx,
+                this.tipSprite, this.tipLabel, this.tipStockText, this.longPressGfx, this.tutorialIndicatorsGfx
             ]);
 
             if (scaleFactor < 1) {
@@ -1479,8 +1553,8 @@ const htmlContent = `<!DOCTYPE html>
             } else if (step === 3) {
                 this.tutorialIndicatorsGfx.strokeCircle(this.gatePos.x, this.gatePos.y, 40);
             } else if (step === 4) {
-                if (this.btnUpgradeCap) {
-                    this.tutorialIndicatorsGfx.strokeRect(this.btnUpgradeCap.x - 45, this.btnUpgradeCap.y - 12, 90, 24);
+                if (this.btnUpgrades) {
+                    this.tutorialIndicatorsGfx.strokeRect(this.btnUpgrades.x - 110, this.btnUpgrades.y - 2, 115, 28);
                 }
             }
         }
@@ -1500,48 +1574,79 @@ const htmlContent = `<!DOCTYPE html>
             this.mainContainer.add(hudBox);
         }
 
-        renderDecorationsGraphics(w, h) {
+        renderDecorationsGraphics(w, h, splitY) {
+            // 1. Festive Bunting: Colorful triangular pennants strung high across top of screen (clear of XP bar!)
             if (this.state.hasBunting) {
                 const gfx = this.add.graphics();
                 const colors = [0x2196f3, 0xff1744, 0xffeb3b, 0x4caf50];
                 let cIdx = 0;
-                for (let x = 15; x < w - 20; x += 25) {
-                    gfx.fillStyle(colors[cIdx % 4], 1);
-                    gfx.fillTriangle(x, 32, x + 20, 32, x + 10, 50);
+                const ropeY = 8; // Raised well above XP bar (XP bar starts at y=35)
+                gfx.lineStyle(1.5, 0xffffff, 0.6);
+                gfx.lineBetween(10, ropeY, w - 10, ropeY);
+                for (let x = 16; x < w - 24; x += 22) {
+                    gfx.fillStyle(colors[cIdx % 4], 0.95);
+                    gfx.fillTriangle(x, ropeY, x + 14, ropeY, x + 7, ropeY + 11);
                     cIdx++;
                 }
                 this.mainContainer.add(gfx);
             }
 
+            // 2. Perimeter Bushes / Trees: Lush, taller green shrub hedges along the ground horizon
             if (this.state.hasTrees) {
                 const gfx = this.add.graphics();
-                for (let x = 10; x < w; x += 30) {
+                const baseY = (splitY || 280);
+                for (let x = 8; x < w - 8; x += 32) {
+                    // Deep forest base
+                    gfx.fillStyle(0x1b5e20, 1);
+                    gfx.fillRoundedRect(x, baseY - 26, 26, 28, 7);
+                    // Mid-tone rich foliage
                     gfx.fillStyle(0x2e7d32, 1);
-                    gfx.fillRect(x, 5, 14, 22);
-                    gfx.fillRect(x, h - 27, 14, 22);
+                    gfx.fillCircle(x + 13, baseY - 18, 12);
+                    // Top vibrant foliage highlight
+                    gfx.fillStyle(0x388e3c, 1);
+                    gfx.fillCircle(x + 13, baseY - 25, 8);
                 }
                 this.mainContainer.add(gfx);
             }
 
-            if (this.state.hasFairyLights) {
+            // 3. Fairy Lights: Warm glowing fairy lights nestled into the taller bushes
+            if (this.state.hasFairyLights && this.state.hasTrees) {
                 const gfx = this.add.graphics();
-                const lightCols = [0xffeb3b, 0x00e676, 0x2196f3, 0xe91e63];
-                for (let x = 20; x < w - 20; x += 18) {
-                    const col = lightCols[Math.floor(x / 18) % 4];
-                    gfx.fillStyle(col, 0.9);
-                    gfx.fillCircle(x, 8, 4);
+                const baseY = (splitY || 280);
+                for (let x = 8; x < w - 8; x += 32) {
+                    // Staggered light 1 (upper left)
+                    const lx1 = x + 7, ly1 = baseY - 24;
+                    gfx.fillStyle(0xffeb3b, 0.35);
+                    gfx.fillCircle(lx1, ly1, 5);
+                    gfx.fillStyle(0xfff9c4, 1);
+                    gfx.fillCircle(lx1, ly1, 2);
+
+                    // Staggered light 2 (mid right)
+                    const lx2 = x + 19, ly2 = baseY - 16;
+                    gfx.fillStyle(0xffeb3b, 0.35);
+                    gfx.fillCircle(lx2, ly2, 5);
+                    gfx.fillStyle(0xfff9c4, 1);
+                    gfx.fillCircle(lx2, ly2, 2);
+
+                    // Staggered light 3 (center peak)
+                    const lx3 = x + 13, ly3 = baseY - 29;
+                    gfx.fillStyle(0xffd54f, 0.4);
+                    gfx.fillCircle(lx3, ly3, 4);
+                    gfx.fillStyle(0xffffff, 1);
+                    gfx.fillCircle(lx3, ly3, 1.8);
                 }
                 this.mainContainer.add(gfx);
             }
 
+            // 4. Diamond Accents
             if (this.state.hasDiamonds) {
                 const gfx = this.add.graphics();
-                gfx.fillStyle(0x00e5ff, 0.8);
-                gfx.fillTriangle(20, h / 2, 28, h / 2 - 8, 36, h / 2);
-                gfx.fillTriangle(20, h / 2, 28, h / 2 + 8, 36, h / 2);
+                gfx.fillStyle(0x00e5ff, 0.85);
+                gfx.fillTriangle(14, h / 2, 22, h / 2 - 8, 30, h / 2);
+                gfx.fillTriangle(14, h / 2, 22, h / 2 + 8, 30, h / 2);
 
-                gfx.fillTriangle(w - 36, h / 2, w - 28, h / 2 - 8, w - 20, h / 2);
-                gfx.fillTriangle(w - 36, h / 2, w - 28, h / 2 + 8, w - 20, h / 2);
+                gfx.fillTriangle(w - 30, h / 2, w - 22, h / 2 - 8, w - 14, h / 2);
+                gfx.fillTriangle(w - 30, h / 2, w - 22, h / 2 + 8, w - 14, h / 2);
                 this.mainContainer.add(gfx);
             }
         }
@@ -1717,7 +1822,7 @@ const htmlContent = `<!DOCTYPE html>
                     ]
                 },
                 {
-                    id: 'plastic', name: 'PLAST SHOP', color: '#f57f17',
+                    id: 'plastic', name: 'PLASTIC SHOP', color: '#f57f17',
                     unlocked: this.state.binUpgrades.plastic.shopUnlocked,
                     tier2Unlocked: this.state.binUpgrades.plastic.tier2Unlocked,
                     tier3Unlocked: this.state.binUpgrades.plastic.tier3Unlocked,
@@ -1734,11 +1839,11 @@ const htmlContent = `<!DOCTYPE html>
             if (isMobile) {
                 const sidePadding = 18; gap = 12;
                 boxW = Math.floor((w - (sidePadding * 2) - gap) / 2);
-                startX = sidePadding + (boxW / 2);
+                startX = Math.round(sidePadding + (boxW / 2));
             } else {
                 const maxTotalW = Math.min(w - 40, 850); gap = 18;
                 boxW = Math.floor((maxTotalW - (3 * gap)) / 4);
-                startX = (w - maxTotalW) / 2 + (boxW / 2);
+                startX = Math.round((w - maxTotalW) / 2 + (boxW / 2));
             }
 
             const boxH = 90;
@@ -1746,10 +1851,10 @@ const htmlContent = `<!DOCTYPE html>
             shops.forEach((s, idx) => {
                 let sx, sy;
                 if (isMobile) {
-                    sx = (idx % 2 === 0) ? startX : startX + boxW + gap;
+                    sx = Math.round((idx % 2 === 0) ? startX : startX + boxW + gap);
                     sy = y + (Math.floor(idx / 2) * 100);
                 } else {
-                    sx = startX + (idx * (boxW + gap));
+                    sx = Math.round(startX + (idx * (boxW + gap)));
                     sy = y;
                 }
 
@@ -1915,18 +2020,38 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         renderTopHUDBar(w, topBarY, isMobile) {
-            const mins = Math.floor(this.state.sessionSeconds / 60).toString().padStart(2, '0');
-            const secs = (this.state.sessionSeconds % 60).toString().padStart(2, '0');
+            const cardX = 20;
+            const cardY = isMobile ? topBarY + 20 : 28;
+            const cardW = isMobile ? (w - 24) : 265;
+            const hasExtraTypes = (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric);
+            const cardH = hasExtraTypes ? 74 : 60;
 
-            const textY = isMobile ? topBarY + 28 : 12;
+            const cardBg = this.add.graphics();
+            // Solid dark charcoal background for maximum contrast against blue sky
+            cardBg.fillStyle(0x131a26, 0.94);
+            cardBg.fillRoundedRect(cardX, cardY, cardW, cardH, 8);
+            // Rich brown outer border
+            cardBg.lineStyle(2, 0x6d4c41, 1);
+            cardBg.strokeRoundedRect(cardX, cardY, cardW, cardH, 8);
+            // Subtle dark inner trim
+            cardBg.lineStyle(1, 0x1f2937, 0.8);
+            cardBg.strokeRoundedRect(cardX + 2, cardY + 2, cardW - 4, cardH - 4, 6);
+
             const r = this.state.resources;
-            const tokensStr = '🟢G:' + r.organic + '  🔵P:' + r.paper + '  🟣Gl:' + r.glass + '  🟡Pl:' + r.plastic;
+            let text = '💵 Cash: $' + this.state.money + '  |  🎟️ Tkns: ' + this.state.questTokens + '\\n' +
+                       '🟢 Organic: ' + r.organic + '   🔵 Paper: ' + r.paper + '\\n' +
+                       '🟡 Plastic: ' + r.plastic + '   🟣 Glass: ' + r.glass;
+            if (hasExtraTypes) {
+                text += '\\n';
+                if (this.state.unlockedTypes.metal) text += '⚪ Metal: ' + (r.metal || 0) + '   ';
+                if (this.state.unlockedTypes.fabric) text += '🌸 Fabric: ' + (r.fabric || 0);
+            }
 
-            this.hudTextObj = this.add.text(14, textY, 'CASH: $' + this.state.money + ' | 🎟️QUEST TKNS: ' + this.state.questTokens + '\\nTOKENS: ' + tokensStr, {
-                fontSize: '11px', style: 'bold', color: '#00e676', lineSpacing: 3
+            this.hudTextObj = this.add.text(cardX + 10, cardY + 7, text, {
+                fontSize: '11px', style: 'bold', color: '#ffffff', lineSpacing: 3
             });
 
-            this.mainContainer.add(this.hudTextObj);
+            this.mainContainer.add([cardBg, this.hudTextObj]);
         }
 
         drawAutoGateProgress(progress) {
@@ -2033,11 +2158,11 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         createTopNavButtons(w) {
-            const btnDecor = this.add.text(w - 14, 12, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#222', padding: { x: 6, y: 4 } })
+            const btnDecor = this.add.text(w - 20, 26, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
                 .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
 
             const hasAnyAfford = this.hasCategoryAffordable('gate') || this.hasCategoryAffordable('tip') || this.hasCategoryAffordable('organic_shop');
-            this.btnUpgrades = this.add.text(w - 14, 40, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#222', padding: { x: 6, y: 4 } })
+            this.btnUpgrades = this.add.text(w - 20, 58, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
                 .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                     this.openModal('upgrades', 'gate');
                 });
@@ -2061,7 +2186,7 @@ const htmlContent = `<!DOCTYPE html>
                         const circleGfx = this.add.graphics();
                         circleGfx.fillStyle(typeData.color, 1);
                         circleGfx.fillCircle(pos.x, pos.y, 14);
-                        circleGfx.lineStyle(4, 0x000000, 1);
+                        circleGfx.lineStyle(2, 0x000000, 1);
                         circleGfx.strokeCircle(pos.x, pos.y, 14);
                         container.add(circleGfx);
                     }
@@ -2076,7 +2201,7 @@ const htmlContent = `<!DOCTYPE html>
                         const circleGfx = this.add.graphics();
                         circleGfx.fillStyle(typeData.color, 1);
                         circleGfx.fillCircle(pos.x, pos.y, 20);
-                        circleGfx.lineStyle(5, 0x000000, 1);
+                        circleGfx.lineStyle(2.5, 0x000000, 1);
                         circleGfx.strokeCircle(pos.x, pos.y, 20);
                         container.add(circleGfx);
                     }
@@ -2089,7 +2214,7 @@ const htmlContent = `<!DOCTYPE html>
                     const circleGfx = this.add.graphics();
                     circleGfx.fillStyle(typeData.color, 1);
                     circleGfx.fillCircle(0, 0, 26);
-                    circleGfx.lineStyle(6, 0x000000, 1);
+                    circleGfx.lineStyle(3, 0x000000, 1); // 3px outline mimicking rubbish sprite cartoon border
                     circleGfx.strokeCircle(0, 0, 26);
                     container.add(circleGfx);
                 }
@@ -2200,7 +2325,7 @@ const htmlContent = `<!DOCTYPE html>
                         this.bins.forEach(b => {
                             const binWorldX = b.x * sFactor;
                             const binWorldY = b.y * sFactor;
-                            const hitDist = 52 * sFactor;
+                            const hitDist = 65 * sFactor;
                             if (Phaser.Math.Distance.Between(item.container.x, item.container.y, binWorldX, binWorldY) < hitDist) {
                                 droppedBin = b;
                             }
@@ -2401,10 +2526,13 @@ const htmlContent = `<!DOCTYPE html>
                 this.modalContainer.destroy(true);
                 this.modalContainer = null;
             }
+            this.modalWalletTxt = null;
             this.activeModal = null;
         }
 
         openModal(type, targetCategory = 'gate', preserveScroll = false) {
+            this.closeModal();
+
             this.activeModal = type;
             this.activeUpgradeCategory = targetCategory;
             if (!preserveScroll) {
@@ -2416,8 +2544,6 @@ const htmlContent = `<!DOCTYPE html>
                 this.generateQuests();
                 this.requestLayoutRebuild();
             }
-
-            this.closeModal();
 
             const w = this.scale.width; 
             const h = this.scale.height;
@@ -2975,38 +3101,86 @@ const htmlContent = `<!DOCTYPE html>
         renderDecorationsModal(w, modalH, boxW) {
             const boxLeft = (w - boxW) / 2;
             const title = this.add.text(w / 2, 22, '🪴 DECORATIONS', { fontSize: '16px', style: 'bold', color: '#a5d6a7' }).setOrigin(0.5);
-            this.decorWalletTxt = this.add.text(w / 2, modalH * 0.86, \`Wallet: \$\${this.state.money}\`, { fontSize: '13px', style: 'bold', color: '#00ff00' }).setOrigin(0.5);
+            const r = this.state.resources;
+            this.decorWalletTxt = this.add.text(w / 2, modalH * 0.86, '🟢 ' + r.organic + '  🔵 ' + r.paper + '  🟡 ' + r.plastic + '  🟣 ' + r.glass, {
+                fontSize: '12px', style: 'bold', color: '#ffd700'
+            }).setOrigin(0.5);
 
             this.modalContainer.add([title, this.decorWalletTxt]);
 
             const decors = [
-                { name: '🌱 Lush Grass Lawn', desc: 'Converts dusty soil ground into rich green grass!', cost: 15, bought: this.state.hasGrass, action: () => { this.state.hasGrass = true; } },
-                { name: 'Perimeter Trees', desc: 'Adds green border trees', cost: 25, bought: this.state.hasTrees, action: () => { this.state.hasTrees = true; } },
-                { name: 'Festive Bunting', desc: 'Adds colorful flags along top path', cost: 20, bought: this.state.hasBunting, action: () => { this.state.hasBunting = true; } },
-                { name: 'Fairy Lights', desc: 'Glowing colored lights along header', cost: 30, bought: this.state.hasFairyLights, action: () => { this.state.hasFairyLights = true; } },
-                { name: 'Diamond Accents', desc: 'Cyan diamond icons on screen borders', cost: 35, bought: this.state.hasDiamonds, action: () => { this.state.hasDiamonds = true; } }
+                {
+                    name: '🌱 Lush Grass Lawn',
+                    desc: 'Converts dusty soil ground into rich green lawn!',
+                    costText: '15 Green',
+                    canAfford: this.state.resources.organic >= 15,
+                    bought: this.state.hasGrass,
+                    action: () => { this.state.resources.organic -= 15; this.state.hasGrass = true; }
+                },
+                {
+                    name: '🌳 Perimeter Bushes',
+                    desc: 'Adds green shrub hedges along the ground horizon!',
+                    costText: '20 Green',
+                    canAfford: this.state.resources.organic >= 20,
+                    bought: this.state.hasTrees,
+                    action: () => { this.state.resources.organic -= 20; this.state.hasTrees = true; }
+                },
+                {
+                    name: '💡 Fairy Lights',
+                    desc: this.state.hasTrees ? 'Glowing warm lights on the horizon bushes!' : 'Requires Perimeter Bushes first!',
+                    costText: '25 Plastic',
+                    canAfford: this.state.hasTrees && (this.state.resources.plastic >= 25),
+                    bought: this.state.hasFairyLights,
+                    locked: !this.state.hasTrees,
+                    action: () => {
+                        if (this.state.hasTrees && this.state.resources.plastic >= 25) {
+                            this.state.resources.plastic -= 25;
+                            this.state.hasFairyLights = true;
+                        }
+                    }
+                },
+                {
+                    name: '🚩 Festive Bunting',
+                    desc: 'Colorful triangle pennant flags across top of screen!',
+                    costText: '20 Paper',
+                    canAfford: this.state.resources.paper >= 20,
+                    bought: this.state.hasBunting,
+                    action: () => { this.state.resources.paper -= 20; this.state.hasBunting = true; }
+                },
+                {
+                    name: '💎 Diamond Accents',
+                    desc: 'Cyan diamond icons on screen borders',
+                    costText: '30 Glass',
+                    canAfford: this.state.resources.glass >= 30,
+                    bought: this.state.hasDiamonds,
+                    action: () => { this.state.resources.glass -= 30; this.state.hasDiamonds = true; }
+                }
             ];
 
             decors.forEach((d, idx) => {
                 const dy = 50 + (idx * 44);
-                const infoTxt = this.add.text(boxLeft + 25, dy, \`\${d.name}\\n\${d.desc}\`, { fontSize: '11px', color: '#fff', lineSpacing: 2 });
+                const infoTxt = this.add.text(boxLeft + 25, dy, d.name + '\\n' + d.desc, { fontSize: '11px', color: '#fff', lineSpacing: 2 });
 
                 if (d.bought) {
                     const boughtBadge = this.add.text(boxLeft + boxW - 35, dy + 6, '[ OWNED ]', { fontSize: '11px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
                     this.modalContainer.add([infoTxt, boughtBadge]);
+                } else if (d.locked) {
+                    const lockBadge = this.add.text(boxLeft + boxW - 35, dy + 6, '[ LOCKED ]', {
+                        fontSize: '10.5px', style: 'bold',
+                        backgroundColor: '#374151', color: '#9ca3af', padding: 4
+                    }).setOrigin(1, 0);
+                    this.modalContainer.add([infoTxt, lockBadge]);
                 } else {
-                    const canAfford = this.state.money >= d.cost;
-                    const btn = this.add.text(boxLeft + boxW - 35, dy + 6, \`BUY (\$\${d.cost})\`, {
-                        fontSize: '11px', style: 'bold',
-                        backgroundColor: canAfford ? '#00e676' : '#424242',
-                        color: canAfford ? '#000' : '#aaa', padding: 4
+                    const btn = this.add.text(boxLeft + boxW - 35, dy + 6, 'BUY (' + d.costText + ')', {
+                        fontSize: '10.5px', style: 'bold',
+                        backgroundColor: d.canAfford ? '#00e676' : '#424242',
+                        color: d.canAfford ? '#000' : '#aaa', padding: 4
                     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
 
-                    if (canAfford) {
+                    if (d.canAfford) {
                         btn.on('pointerup', () => {
-                            this.state.money -= d.cost;
                             d.action();
-                            if (this.decorWalletTxt) this.decorWalletTxt.setText(\`Wallet: \$\${this.state.money}\`);
+                            this.updateUI();
                             this.requestLayoutRebuild();
                             this.openModal('decorations');
                         });
@@ -3430,12 +3604,20 @@ const htmlContent = `<!DOCTYPE html>
 
         updateUI() {
             if (this.hudTextObj) {
-                const mins = Math.floor(this.state.sessionSeconds / 60).toString().padStart(2, '0');
-                const secs = (this.state.sessionSeconds % 60).toString().padStart(2, '0');
                 const r = this.state.resources;
-                const tokensStr = '🟢G:' + r.organic + '  🔵P:' + r.paper + '  🟣Gl:' + r.glass + '  🟡Pl:' + r.plastic;
-
-                this.hudTextObj.setText('CASH: $' + this.state.money + ' | 🎟️QUEST TKNS: ' + this.state.questTokens + '\\nTOKENS: ' + tokensStr);
+                const hasExtraTypes = (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric);
+                let text = '💵 Cash: $' + this.state.money + '  |  🎟️ Tkns: ' + this.state.questTokens + '\\n' +
+                           '🟢 Organic: ' + r.organic + '   🔵 Paper: ' + r.paper + '\\n' +
+                           '🟡 Plastic: ' + r.plastic + '   🟣 Glass: ' + r.glass;
+                if (hasExtraTypes) {
+                    text += '\\n';
+                    if (this.state.unlockedTypes.metal) text += '⚪ Metal: ' + (r.metal || 0) + '   ';
+                    if (this.state.unlockedTypes.fabric) text += '🌸 Fabric: ' + (r.fabric || 0);
+                }
+                this.hudTextObj.setText(text);
+            }
+            if (this.modalWalletTxt && this.activeModal === 'upgrades') {
+                this.modalWalletTxt.setText('$' + this.state.money + ' | 🎟️' + this.state.questTokens);
             }
 
             if (this.tipStockText) {
@@ -3465,6 +3647,11 @@ const htmlContent = `<!DOCTYPE html>
     const config = {
         type: Phaser.AUTO,
         parent: 'game-container',
+        resolution: window.devicePixelRatio || 1,
+        render: {
+            antialias: true,
+            roundPixels: true
+        },
         scale: {
             mode: Phaser.Scale.RESIZE,
             autoCenter: Phaser.Scale.CENTER_BOTH,
