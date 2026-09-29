@@ -143,7 +143,7 @@
                 bagValue: 1,
                 doubleTrashChance: 0.00,
                 doubleTokenChance: 0.00,
-                maxTrashQueue: 5, // Conveyor capacity starts at 5!
+                maxTrashQueue: Infinity, // Conveyor displays 10 visible items with permanent overflow queue buffer!
 
                 // Streak System (Dumpster fire removed)
                 streak: 0,
@@ -200,11 +200,11 @@
                 upgrades: {
                     gateFee: { lvl: 0, max: 10, cost: 2, reqLvl: 1 },
                     footTraffic: { lvl: 0, max: 5, cost: 5, reqLvl: 2 },
-                    gateAuto: { lvl: 0, max: 8, cost: 1, reqLvl: 1 },
+                    gateAuto: { lvl: 0, max: 8, cost: 10, reqLvl: 1 },
                     doubleTrash: { lvl: 0, max: 5, cost: 4, reqLvl: 2 },
                     busRush: { lvl: 0, max: 5, cost: 15, reqLvl: 4 },
 
-                    queueCap: { lvl: 0, max: 13, cost: 15, reqLvl: 1 },
+                    queueCap: { lvl: 0, max: 0, cost: 0, reqLvl: 1 },
                     doubleToken: { lvl: 0, max: 6, cost: 8, reqLvl: 2 },
                     sanitiser: { lvl: 0, max: 1, cost: 5, reqLvl: 2 },
                     autoSort: { lvl: 0, max: 1, cost: 10, reqLvl: 3 },
@@ -263,6 +263,7 @@
 
             this.trashQueue = [];
             this.customerQueue = [];
+            this.shopCustomers = []; // Up to 3 walking meadow customers
             this.currentCustomer = null;
             this.customerCooldown = 0;
             this.activeModal = null;
@@ -446,9 +447,6 @@
             // Create gentle clouds
             this.initClouds();
 
-            if (!this.currentCustomer) {
-                this.generateCustomerOrder();
-            }
             this.buildLayout();
 
             for (let i = 0; i < 3; i++) this.spawnCustomer();
@@ -537,22 +535,12 @@
                 loop: true
             });
 
-            // Customer Counter Cooldown Timer Loop
+            // Meadow Shop Customer Replenishment Loop (Up to 3 in line above dirt)
             this.time.addEvent({
-                delay: 200,
+                delay: 2000,
                 callback: () => {
-                    if (this.customerCooldown > 0) {
-                        this.customerCooldown -= 200;
-                        if (this.customerCooldown <= 0) {
-                            this.customerCooldown = 0;
-                            this.generateCustomerOrder();
-                            this.requestLayoutRebuild();
-                        } else {
-                            if (this.shopWaitTxt && this.shopWaitTxt.scene) {
-                                const sec = Math.ceil(this.customerCooldown / 1000);
-                                this.shopWaitTxt.setText('🚶 Next customer arriving in ' + sec + 's...');
-                            }
-                        }
+                    if (this.shopCustomers && this.shopCustomers.length < 3) {
+                        this.spawnShopCustomer(false);
                     }
                 },
                 loop: true
@@ -634,48 +622,41 @@
         }
 
         renderDumpsterFireBar() {
+            const isActive = (this.state && this.state.streak > 0 && this.state.streakTimer > 0);
+
             // Always update streak text (so high score is permanently visible!)
             if (this.dumpsterStreakText) {
                 this.dumpsterStreakText.setText('🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore);
+                this.dumpsterStreakText.setColor(isActive ? '#ffca28' : '#9ca3af');
                 this.dumpsterStreakText.setVisible(true);
             }
 
-            if (!this.dumpsterBarGfx) return;
+            if (!this.dumpsterBarGfx || !this.dumpsterStreakText) return;
             this.dumpsterBarGfx.clear();
 
-            // ONLY show depleting bar when streak is 5 or more!
-            const shouldShowBar = (this.state.streak >= 5 && this.state.streakTimer > 0);
-            if (!shouldShowBar) {
-                if (this.dumpsterFireBanner) this.dumpsterFireBanner.setVisible(false);
-                return;
-            }
+            // Center streak timer bar directly below the streak badge
+            const barW = 160;
+            const barH = 6;
+            const barX = this.dumpsterStreakText.x - (barW / 2);
+            const barY = this.dumpsterStreakText.y + 14;
 
-            if (!this.bins || this.bins.length === 0) return;
-            const startBinX = this.bins[0].x - 26;
-            const lastBinIdx = Math.min(this.bins.length - 1, 3);
-            const endBinX = this.bins[lastBinIdx].x + 26;
-            const barW = endBinX - startBinX;
-            const barY = this.bins[0].y + 46;
-            const barH = 8;
+            // Background slot
+            this.dumpsterBarGfx.fillStyle(0x1f2937, 0.9);
+            this.dumpsterBarGfx.fillRoundedRect(barX, barY, barW, barH, 3);
+            this.dumpsterBarGfx.lineStyle(1, 0x475569, 0.8);
+            this.dumpsterBarGfx.strokeRoundedRect(barX, barY, barW, barH, 3);
 
-            const ratio = Math.min(1, Math.max(0, this.state.streakTimer / 2000));
-            const currentWidth = barW * ratio;
+            if (isActive) {
+                const ratio = Math.min(1, Math.max(0, this.state.streakTimer / 2000));
+                const currentWidth = Math.max(4, barW * ratio);
 
-            let colorHex = 0xffd700;
-            if (this.state.dumpsterFireActive) colorHex = 0xff3d00;
-            else if (ratio < 0.4) colorHex = 0xf44336;
-            else if (ratio < 0.7) colorHex = 0xff9800;
+                let colorHex = 0x22c55e;
+                if (this.state.streak >= 10) colorHex = 0xff3d00;
+                else if (ratio < 0.35) colorHex = 0xef4444;
+                else if (ratio < 0.65) colorHex = 0xf59e0b;
 
-            this.dumpsterBarGfx.fillStyle(0x222222, 0.85);
-            this.dumpsterBarGfx.fillRect(startBinX, barY, barW, barH);
-            this.dumpsterBarGfx.lineStyle(1, 0x555555, 1);
-            this.dumpsterBarGfx.strokeRect(startBinX, barY, barW, barH);
-
-            this.dumpsterBarGfx.fillStyle(colorHex, 1);
-            this.dumpsterBarGfx.fillRect(startBinX, barY, currentWidth, barH);
-
-            if (this.dumpsterFireBanner) {
-                this.dumpsterFireBanner.setVisible(this.state.dumpsterFireActive);
+                this.dumpsterBarGfx.fillStyle(colorHex, 1);
+                this.dumpsterBarGfx.fillRoundedRect(barX, barY, currentWidth, barH, 3);
             }
         }
 
@@ -714,19 +695,6 @@
         triggerGate() {
             if (this.customerQueue.length === 0) return;
 
-            const cap = this.state.maxTrashQueue;
-            if (cap !== Infinity && this.trashQueue.length >= cap) {
-                const warnTxt = this.add.text(this.gatePos.x, this.gatePos.y - 35, '⚠️ CONVEYOR FULL!', {
-                    fontSize: '12px', style: 'bold', color: '#ff3d00', backgroundColor: '#000', padding: 4
-                }).setOrigin(0.5).setDepth(30);
-                if (this.tweens && this.tweens.add) {
-                    this.tweens.add({ targets: warnTxt, y: warnTxt.y - 25, alpha: 0, duration: 800, onComplete: () => warnTxt.destroy() });
-                } else {
-                    warnTxt.destroy();
-                }
-                return;
-            }
-
             const cust = this.customerQueue.shift();
             
             this.state.money += this.state.g1Fee;
@@ -734,12 +702,10 @@
             if (Math.random() < this.state.doubleTrashChance) trashGained = 2;
 
             for (let i = 0; i < trashGained; i++) {
-                if (cap === Infinity || this.trashQueue.length < cap) {
-                    this.addTrashToConveyor();
-                }
+                this.addTrashToConveyor();
             }
 
-            const popTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, `+$${this.state.g1Fee} | +${trashGained} Rubbish`, {
+            const popTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, '+$' + this.state.g1Fee + ' | +' + trashGained + ' Rubbish', {
                 fontSize: '13px', style: 'bold', color: '#00ff00'
             }).setOrigin(0.5).setDepth(20);
 
@@ -769,9 +735,6 @@
         }
 
         addTrashToConveyor(forcedMult = null) {
-            const cap = this.state.maxTrashQueue;
-            if (cap !== Infinity && this.trashQueue.length >= cap) return;
-
             const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
             const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
             const typeData = TRASH_TYPES[typeKey];
@@ -1018,29 +981,18 @@
             }
         }
 
-        getCurrentTokenCount(customer) {
-            if (!customer) return 0;
-            if (customer.isRecipe) {
-                const reqTokens = customer.costTokens;
+        getCurrentBuyerTokens(customer) {
+            if (!customer || !customer.order) return 0;
+            const o = customer.order;
+            if (o.isRecipe) {
+                const reqTokens = o.costTokens || {};
                 const key = Object.keys(reqTokens)[0];
                 return this.state.resources[key] || 0;
             }
-            return this.state.resources[customer.itemKey] || 0;
+            return this.state.resources[o.itemKey] || 0;
         }
 
-        generateCustomerOrder() {
-            const names = [
-                { name: 'Gardener Pete', avatar: '🧑‍🌾' },
-                { name: 'Student Mia', avatar: '🧑‍🎓' },
-                { name: 'Builder Bob', avatar: '👷' },
-                { name: 'Chef Rosa', avatar: '👩‍🍳' },
-                { name: 'Artisan Leo', avatar: '🎨' },
-                { name: 'Scientist Dr. Kim', avatar: '🧑‍🔬' },
-                { name: 'Neighbor Tom', avatar: '🧑' }
-            ];
-            const pick = names[Math.floor(Math.random() * names.length)];
-
-            // Check if player has unlocked recipes
+        generateBuyerOrderData() {
             const unlockedRecipeKeys = [];
             if (this.state.unlockedRecipes) {
                 Object.keys(this.state.unlockedRecipes).forEach(rKey => {
@@ -1048,83 +1000,209 @@
                 });
             }
 
-            const wantRecipe = (unlockedRecipeKeys.length > 0) && (Math.random() < 0.40);
+            const wantRecipe = (unlockedRecipeKeys.length > 0) && (Math.random() < 0.35);
 
             if (wantRecipe) {
                 const rKey = unlockedRecipeKeys[Math.floor(Math.random() * unlockedRecipeKeys.length)];
                 const rData = RECIPES_DATA[rKey];
-                this.currentCustomer = {
-                    name: pick.name,
-                    avatar: pick.avatar,
+                return {
                     isRecipe: true,
                     itemKey: rKey,
                     itemName: rData.name,
+                    icon: '🌱',
                     qty: 1,
                     costTokens: rData.costTokens,
                     rewardCash: rData.sellPrice,
-                    rewardXP: rData.xpReward,
-                    dialog: 'Buying 1 ' + rData.name + '!'
+                    rewardXP: rData.xpReward
                 };
-            } else {
-                const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
-                const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
-                const typeData = TRASH_TYPES[typeKey];
-                const qty = Phaser.Math.Between(2, 4);
-                const cash = (qty * 4) + Phaser.Math.Between(3, 7);
-                const xp = (qty * 8) + 6;
-                this.currentCustomer = {
-                    name: pick.name,
-                    avatar: pick.avatar,
-                    isRecipe: false,
-                    itemKey: typeKey,
-                    itemName: typeData.name + ' Tokens',
-                    qty: qty,
-                    rewardCash: cash,
-                    rewardXP: xp,
-                    dialog: 'Need ' + qty + ' ' + typeData.name + ' tokens!'
-                };
+            }
+
+            const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+            const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+            const typeData = TRASH_TYPES[typeKey];
+            const qty = Phaser.Math.Between(2, 4);
+            const cash = (qty * 5) + Phaser.Math.Between(2, 6);
+            const xp = (qty * 8) + 6;
+
+            const icons = {
+                organic: '🍏',
+                paper: '📦',
+                glass: '🍾',
+                plastic: '🥤',
+                metal: '🥫',
+                fabric: '👕'
+            };
+
+            return {
+                isRecipe: false,
+                itemKey: typeKey,
+                itemName: typeData.name,
+                icon: icons[typeKey] || '🗑️',
+                qty: qty,
+                rewardCash: cash,
+                rewardXP: xp
+            };
+        }
+
+        createBuyerContainer(customer, slotIndex, walkY, startX) {
+            const person = this.add.sprite(0, 0, 'person').setOrigin(0.5, 0.5);
+
+            const haveTokens = this.getCurrentBuyerTokens(customer);
+            const canAfford = haveTokens >= customer.order.qty;
+
+            const bubbleGfx = this.add.graphics();
+            bubbleGfx.fillStyle(0x0f172a, 0.95);
+            bubbleGfx.fillRoundedRect(-38, -70, 76, 46, 5);
+            bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
+            bubbleGfx.strokeRoundedRect(-38, -70, 76, 46, 5);
+            bubbleGfx.fillStyle(0x0f172a, 0.95);
+            bubbleGfx.fillTriangle(-4, -24, 4, -24, 0, -19);
+            bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
+            bubbleGfx.lineBetween(-4, -24, 0, -19);
+            bubbleGfx.lineBetween(0, -19, 4, -24);
+
+            const orderTxt = this.add.text(0, -62, customer.order.icon + ' x' + customer.order.qty + ' (+$' + customer.order.rewardCash + ')', {
+                fontSize: '9.5px', style: 'bold', color: '#ffca28'
+            }).setOrigin(0.5);
+
+            const stockTxt = this.add.text(0, -50, 'Have: ' + haveTokens + '/' + customer.order.qty, {
+                fontSize: '8.5px', style: 'bold', color: canAfford ? '#4ade80' : '#f87171'
+            }).setOrigin(0.5);
+
+            // Accept button on LEFT (-17), Reject button on RIGHT (+17)
+            const btnAccept = this.add.text(-17, -35, '✓', {
+                fontSize: '11px', style: 'bold',
+                backgroundColor: canAfford ? '#15803d' : '#334155',
+                color: canAfford ? '#ffffff' : '#9ca3af',
+                padding: { x: 6, y: 1 }
+            }).setOrigin(0.5);
+
+            const btnReject = this.add.text(17, -35, '✕', {
+                fontSize: '11px', style: 'bold',
+                backgroundColor: '#b91c1c',
+                color: '#ffffff',
+                padding: { x: 5, y: 1 }
+            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+            if (canAfford) {
+                btnAccept.setInteractive({ useHandCursor: true });
+            }
+
+            btnAccept.on('pointerup', () => this.fulfillBuyerOrder(customer));
+            btnReject.on('pointerup', () => this.rejectBuyerOrder(customer));
+
+            const custContainer = this.add.container(startX, walkY, [
+                person, bubbleGfx, orderTxt, stockTxt, btnAccept, btnReject
+            ]).setDepth(15);
+
+            customer.container = custContainer;
+            customer.bubbleGfx = bubbleGfx;
+            customer.orderTxt = orderTxt;
+            customer.stockTxt = stockTxt;
+            customer.btnAccept = btnAccept;
+            customer.btnReject = btnReject;
+
+            if (this.mainContainer) {
+                this.mainContainer.add(custContainer);
             }
         }
 
-        fulfillCustomerOrder() {
-            const c = this.currentCustomer;
-            if (!c) return;
+        refreshBuyerBubbles() {
+            if (!this.shopCustomers) return;
+            this.shopCustomers.forEach(cust => {
+                if (cust.leaving || !cust.container || !cust.container.scene) return;
+                const haveTokens = this.getCurrentBuyerTokens(cust);
+                const reqTokens = cust.order.qty;
+                const canAfford = haveTokens >= reqTokens;
 
-            if (c.isRecipe) {
-                Object.keys(c.costTokens).forEach(tKey => {
-                    this.state.resources[tKey] -= c.costTokens[tKey];
+                if (cust.stockTxt) {
+                    cust.stockTxt.setText('Have: ' + haveTokens + '/' + reqTokens);
+                    cust.stockTxt.setColor(canAfford ? '#4ade80' : '#f87171');
+                }
+
+                if (cust.bubbleGfx) {
+                    cust.bubbleGfx.clear();
+                    cust.bubbleGfx.fillStyle(0x0f172a, 0.95);
+                    cust.bubbleGfx.fillRoundedRect(-38, -70, 76, 46, 5);
+                    cust.bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
+                    cust.bubbleGfx.strokeRoundedRect(-38, -70, 76, 46, 5);
+                    cust.bubbleGfx.fillStyle(0x0f172a, 0.95);
+                    cust.bubbleGfx.fillTriangle(-4, -24, 4, -24, 0, -19);
+                    cust.bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
+                    cust.bubbleGfx.lineBetween(-4, -24, 0, -19);
+                    cust.bubbleGfx.lineBetween(0, -19, 4, -24);
+                }
+
+                if (cust.btnAccept) {
+                    cust.btnAccept.setStyle({
+                        backgroundColor: canAfford ? '#15803d' : '#334155',
+                        color: canAfford ? '#ffffff' : '#9ca3af'
+                    });
+                    if (canAfford) {
+                        cust.btnAccept.setInteractive({ useHandCursor: true });
+                    } else {
+                        if (cust.btnAccept.input) cust.btnAccept.disableInteractive();
+                    }
+                }
+            });
+        }
+
+        spawnShopCustomer(instant = false) {
+            if (!this.shopCustomers) this.shopCustomers = [];
+            if (this.shopCustomers.length >= 3) return;
+
+            const slotIndex = this.shopCustomers.length;
+            const slotSpacing = 82;
+            const slot0X = 58;
+            const targetX = slot0X + (slotIndex * slotSpacing);
+            const walkY = (this.splitY || 240) - 20;
+
+            const orderData = this.generateBuyerOrderData();
+            const customer = {
+                id: 'cust_' + Date.now() + '_' + Math.random(),
+                order: orderData,
+                targetSlot: slotIndex,
+                leaving: false,
+                container: null
+            };
+
+            const startX = instant ? targetX : -35;
+            this.createBuyerContainer(customer, slotIndex, walkY, startX);
+            this.shopCustomers.push(customer);
+
+            if (!instant && customer.container && this.tweens && this.tweens.add) {
+                this.tweens.add({
+                    targets: customer.container,
+                    x: targetX,
+                    duration: 600,
+                    ease: 'Power1'
+                });
+            }
+        }
+
+        fulfillBuyerOrder(customer) {
+            if (customer.leaving) return;
+            const haveTokens = this.getCurrentBuyerTokens(customer);
+            if (haveTokens < customer.order.qty) return;
+
+            customer.leaving = true;
+            if (customer.order.isRecipe) {
+                Object.keys(customer.order.costTokens).forEach(tKey => {
+                    this.state.resources[tKey] -= customer.order.costTokens[tKey];
                 });
             } else {
-                this.state.resources[c.itemKey] -= c.qty;
+                this.state.resources[customer.order.itemKey] -= customer.order.qty;
             }
 
-            this.state.money += c.rewardCash;
-            this.addXP(c.rewardXP);
+            this.state.money += customer.order.rewardCash;
+            this.addXP(customer.order.rewardXP);
             this.state.totalQuestsCompleted = (this.state.totalQuestsCompleted || 0) + 1;
 
-            const popTxt = this.add.text(120, this.splitY ? (this.splitY + 20) : 200, '💰 +$' + c.rewardCash + ' | ⭐ +' + c.rewardXP + ' XP!', {
-                fontSize: '13px', style: 'bold', color: '#00e676', backgroundColor: '#000000', padding: 4
-            }).setOrigin(0.5).setDepth(30);
-
-            if (this.tweens && this.tweens.add) {
-                this.tweens.add({ targets: popTxt, y: popTxt.y - 30, alpha: 0, duration: 900, onComplete: () => popTxt.destroy() });
-            } else {
-                popTxt.destroy();
-            }
-
-            this.currentCustomer = null;
-            this.customerCooldown = 1500;
-            this.updateUI();
-            this.requestLayoutRebuild();
-        }
-
-        rejectCustomerOrder() {
-            const c = this.currentCustomer;
-            if (!c) return;
-
-            const popTxt = this.add.text(120, this.splitY ? (this.splitY + 20) : 200, '👋 Order skipped', {
-                fontSize: '12px', style: 'bold', color: '#ff5252', backgroundColor: '#000000', padding: 4
-            }).setOrigin(0.5).setDepth(30);
+            const popX = customer.container ? customer.container.x : 100;
+            const popY = customer.container ? customer.container.y - 75 : 200;
+            const popTxt = this.add.text(popX, popY, '+$' + customer.order.rewardCash + ' ⭐+' + customer.order.rewardXP + ' XP!', {
+                fontSize: '12px', style: 'bold', color: '#00e676', backgroundColor: '#000000', padding: 3
+            }).setOrigin(0.5).setDepth(40);
 
             if (this.tweens && this.tweens.add) {
                 this.tweens.add({ targets: popTxt, y: popTxt.y - 25, alpha: 0, duration: 800, onComplete: () => popTxt.destroy() });
@@ -1132,10 +1210,74 @@
                 popTxt.destroy();
             }
 
-            this.currentCustomer = null;
-            this.customerCooldown = 5000;
+            if (customer.container && this.tweens && this.tweens.add) {
+                this.tweens.add({
+                    targets: customer.container,
+                    x: customer.container.x + 80,
+                    alpha: 0,
+                    duration: 350,
+                    onComplete: () => {
+                        if (customer.container) customer.container.destroy();
+                    }
+                });
+            } else if (customer.container) {
+                customer.container.destroy();
+            }
+
+            const idx = this.shopCustomers.indexOf(customer);
+            if (idx !== -1) this.shopCustomers.splice(idx, 1);
+
+            this.repositionShopCustomers();
             this.updateUI();
-            this.requestLayoutRebuild();
+            this.refreshBuyerBubbles();
+        }
+
+        rejectBuyerOrder(customer) {
+            if (customer.leaving) return;
+            customer.leaving = true;
+
+            if (customer.container && this.tweens && this.tweens.add) {
+                this.tweens.add({
+                    targets: customer.container,
+                    y: customer.container.y + 25,
+                    alpha: 0,
+                    duration: 250,
+                    onComplete: () => {
+                        if (customer.container) customer.container.destroy();
+                    }
+                });
+            } else if (customer.container) {
+                customer.container.destroy();
+            }
+
+            const idx = this.shopCustomers.indexOf(customer);
+            if (idx !== -1) this.shopCustomers.splice(idx, 1);
+
+            this.repositionShopCustomers();
+            this.updateUI();
+            this.refreshBuyerBubbles();
+        }
+
+        repositionShopCustomers() {
+            const slotSpacing = 82;
+            const slot0X = 58;
+            this.shopCustomers.forEach((cust, index) => {
+                if (cust.leaving) return;
+                const targetX = slot0X + (index * slotSpacing);
+                cust.targetSlot = index;
+                if (cust.container && cust.container.scene) {
+                    if (this.tweens && this.tweens.add) {
+                        this.tweens.add({
+                            targets: cust.container,
+                            x: targetX,
+                            duration: 300,
+                            ease: 'Power1'
+                        });
+                    } else {
+                        cust.container.x = targetX;
+                    }
+                }
+            });
         }
 
         handleResize(gameSize) {
@@ -1240,14 +1382,14 @@
             this.renderTopHUDBar(width, topBarY, isMobile);
             this.createTopNavButtons(width);
 
-            // 1. CUSTOMER SHOP (Top-Left of Meadow/Dirt Area)
-            this.renderCustomerShop(width, splitY);
+            // 1. WALKING MEADOW CUSTOMERS (Above dirt, up to 3 in line)
+            this.renderMeadowShopLine(width, splitY);
 
             // 3. QUEUE ROW
             this.queueY = queueY;
             this.queueStartX = startBinX;
 
-            this.queueCounterText = this.add.text(width * 0.72, queueY, '0/' + this.state.maxTrashQueue, { fontSize: '13px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            this.queueCounterText = this.add.text(width * 0.72, queueY, '0/10 visible', { fontSize: '13px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
             
             this.queueHighlight = this.add.graphics();
             this.queueHighlight.lineStyle(3, 0xffd700, 1);
@@ -1388,15 +1530,16 @@
                 this.mainContainer.add([sprite, label, countText, binHighlightGfx]);
             });
 
-            // Streak Score Text & Dumpster Fire Bar Setup
+            // Streak Score Text & Streak Bar Setup
             // Permanent Responsive Streak & High Score Badge
-            this.dumpsterStreakText = this.add.text(Math.round(width / 2), binBaselineY + 36, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
+            this.dumpsterStreakText = this.add.text(Math.round(width * 0.58), binBaselineY + 28, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
                 fontSize: '12px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 4 }
-            }).setOrigin(0.5);
-            this.mainContainer.add(this.dumpsterStreakText);
+            }).setOrigin(0.5).setDepth(15);
+            this.dumpsterBarGfx = this.add.graphics().setDepth(15);
+            this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
-            // 5. GATE (Direct Intake onto Conveyor Belt, Tip removed)
-            this.gatePos = { x: Math.round(width * 0.5), y: bottomY };
+            // 5. GATE (Direct Intake onto Conveyor Belt, placed at bottom-left to avoid streak overlap)
+            this.gatePos = { x: Math.round(width * 0.22), y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
             this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE [SPACE]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
@@ -1600,79 +1743,32 @@
             }
         }
 
-        renderCustomerShop(w, splitY) {
-            const isMobile = (this.scale.height > this.scale.width && this.scale.width < 600);
-            const shopX = 18;
-            const shopY = splitY + 12;
-            const shopW = isMobile ? Math.min(w - 36, 310) : Math.min(Math.round(w * 0.44), 300);
-            const shopH = 82;
+        renderMeadowShopLine(w, splitY) {
+            this.splitY = splitY;
+            const walkY = splitY - 20;
+            const slotSpacing = 82;
+            const slot0X = 58;
 
-            const shopBg = this.add.graphics();
-            shopBg.fillStyle(0x131a26, 0.95);
-            shopBg.fillRoundedRect(shopX, shopY, shopW, shopH, 8);
-            shopBg.lineStyle(2, 0x4fc3f7, 0.85);
-            shopBg.strokeRoundedRect(shopX, shopY, shopW, shopH, 8);
-            this.mainContainer.add(shopBg);
+            if (!this.shopCustomers) this.shopCustomers = [];
 
-            if (this.customerCooldown > 0 || !this.currentCustomer) {
-                const sec = Math.max(1, Math.ceil((this.customerCooldown || 5000) / 1000));
-                this.shopWaitTxt = this.add.text(shopX + (shopW / 2), shopY + (shopH / 2), '🚶 Next customer arriving in ' + sec + 's...', {
-                    fontSize: '11px', style: 'bold', color: '#90caf9'
-                }).setOrigin(0.5);
-                this.mainContainer.add(this.shopWaitTxt);
-                return;
+            // Rebuild visual containers for active customers on new mainContainer
+            this.shopCustomers.forEach((cust, idx) => {
+                if (cust.container) {
+                    cust.container.destroy();
+                    cust.container = null;
+                }
+                const targetX = slot0X + (idx * slotSpacing);
+                this.createBuyerContainer(cust, idx, walkY, targetX);
+            });
+
+            // Populate up to 3 customers if needed
+            while (this.shopCustomers.length < 3) {
+                this.spawnShopCustomer(true);
             }
-
-            const c = this.currentCustomer;
-            const currentTokens = this.getCurrentTokenCount(c);
-            const reqTokens = c.qty;
-            const canAfford = currentTokens >= reqTokens;
-
-            // Header row: Avatar + Name
-            const avatarTxt = this.add.text(shopX + 10, shopY + 10, c.avatar || '🧑', { fontSize: '24px' });
-            const nameTxt = this.add.text(shopX + 42, shopY + 9, c.name, {
-                fontSize: '12px', style: 'bold', color: '#ffca28'
-            });
-            const orderTitle = this.add.text(shopX + shopW - 10, shopY + 10, '🛒 CUSTOMER', {
-                fontSize: '9px', style: 'bold', color: '#64b5f6', backgroundColor: '#1e293b', padding: { x: 4, y: 2 }
-            }).setOrigin(1, 0);
-
-            // Order detail & inventory check
-            const orderDetailTxt = this.add.text(shopX + 42, shopY + 28, c.dialog + ' (Have: ' + currentTokens + '/' + reqTokens + ')', {
-                fontSize: '10.5px', style: 'bold', color: canAfford ? '#a5d6a7' : '#ef9a9a'
-            });
-
-            // Reward display: cash & XP
-            const rewardTxt = this.add.text(shopX + 10, shopY + 54, '💵 +$' + c.rewardCash + '  ⭐ +' + c.rewardXP + ' XP', {
-                fontSize: '11px', style: 'bold', color: '#ffd700'
-            });
-
-            // Accept button
-            const btnAccept = this.add.text(shopX + shopW - 74, shopY + 50, canAfford ? '[ ACCEPT ]' : '(Need more)', {
-                fontSize: '10.5px', style: 'bold',
-                backgroundColor: canAfford ? '#2e7d32' : '#374151',
-                color: canAfford ? '#ffffff' : '#9e9e9e',
-                padding: { x: 6, y: 4 }
-            }).setOrigin(0, 0);
-
-            if (canAfford) {
-                btnAccept.setInteractive({ useHandCursor: true }).on('pointerup', () => this.fulfillCustomerOrder());
-            }
-
-            // Reject button (✕)
-            const btnReject = this.add.text(shopX + shopW - 10, shopY + 50, '✕', {
-                fontSize: '11px', style: 'bold',
-                backgroundColor: '#b71c1c', color: '#ffffff',
-                padding: { x: 6, y: 4 }
-            }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.rejectCustomerOrder());
-
-            this.mainContainer.add([avatarTxt, nameTxt, orderTitle, orderDetailTxt, rewardTxt, btnAccept, btnReject]);
         }
 
         updateCustomerShopUI() {
-            if (this.currentCustomer && this.mainContainer && this.mainContainer.scene) {
-                // Keep customer shop responsive
-            }
+            this.refreshBuyerBubbles();
         }
 
         renderWorkshopsUI(w, h, y) {
@@ -1848,13 +1944,13 @@
 
                     const title = this.add.text(sx, sy + 10, s.name + '\n(Locked)', { fontSize: '11px', style: 'bold', color: '#666', align: 'center' }).setOrigin(0.5);
 
-                    const btnBuy = this.add.text(sx, sy - 2, 'BUY WORKSHOPS FACILITY\n(10 Quest Tokens)', {
+                    const btnBuy = this.add.text(sx, sy - 2, 'BUY WORKSHOPS FACILITY\n($50 Cash)', {
                         fontSize: '9.5px', style: 'bold', backgroundColor: '#333', color: '#ffd700', align: 'center', padding: 4
                     }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
                     btnBuy.on('pointerup', () => {
-                        if (this.state.questTokens >= 10) {
-                            this.state.questTokens -= 10;
+                        if (this.state.money >= 50) {
+                            this.state.money -= 50;
                             this.state.unlockedWorkshopsFacility = true;
                             Object.keys(this.state.binUpgrades).forEach(bId => {
                                 this.state.binUpgrades[bId].shopUnlocked = true;
@@ -1929,7 +2025,7 @@
             cardBg.strokeRoundedRect(cardX + 2, cardY + 2, cardW - 4, cardH - 4, 6);
 
             const r = this.state.resources;
-            let text = '💵 Cash: $' + this.state.money + '  |  🎟️ Tkns: ' + this.state.questTokens + '\n' +
+            let text = '💵 Cash: $' + this.state.money + '  |  ⭐ SP: ' + (this.state.skillPoints || 0) + '\n' +
                        '🟢 Organic: ' + r.organic + '   🔵 Paper: ' + r.paper + '\n' +
                        '🟡 Plastic: ' + r.plastic + '   🟣 Glass: ' + r.glass;
             if (hasExtraTypes) {
@@ -2484,17 +2580,16 @@
                         id: 'gateAuto',
                         name: 'Auto Gate Speed',
                         desc: !this.state.isGateAuto
-                            ? 'Unlocks automated gate opening (1 Quest Token)'
-                            : `Interval: ${(this.state.autoGateSpeed / 1000).toFixed(1)}s ➔ ${(Math.max(200, this.state.autoGateSpeed - 600) / 1000).toFixed(1)}s (-0.6s)`,
-                        cost: !this.state.isGateAuto ? '1 Token' : ('$' + this.state.upgrades.gateAuto.cost),
+                            ? 'Unlocks automated gate opening ($10)'
+                            : ('Interval: ' + (this.state.autoGateSpeed / 1000).toFixed(1) + 's ➔ ' + (Math.max(200, this.state.autoGateSpeed - 600) / 1000).toFixed(1) + 's (-0.6s)'),
+                        cost: '$' + this.state.upgrades.gateAuto.cost,
                         lvl: this.state.upgrades.gateAuto.lvl, max: 8, reqLvl: 1,
-                        canAfford: !this.state.isGateAuto ? this.state.questTokens >= 1 : this.state.money >= this.state.upgrades.gateAuto.cost,
+                        canAfford: this.state.money >= this.state.upgrades.gateAuto.cost,
                         action: () => {
+                            this.state.money -= this.state.upgrades.gateAuto.cost;
                             if (!this.state.isGateAuto) {
-                                this.state.questTokens -= 1;
                                 this.state.isGateAuto = true;
                             } else {
-                                this.state.money -= this.state.upgrades.gateAuto.cost;
                                 this.state.autoGateSpeed = Math.max(200, this.state.autoGateSpeed - 600);
                                 this.state.upgrades.gateAuto.cost *= 2;
                             }
@@ -2534,30 +2629,7 @@
                     }
                 ];
             } else if (catKey === 'conveyor') {
-                const capLvl = this.state.upgrades.queueCap.lvl;
-                const nextCap = (capLvl < CAPACITY_TIERS.length - 1) ? CAPACITY_TIERS[capLvl + 1] : CAPACITY_TIERS[CAPACITY_TIERS.length - 1];
-                const capCost = (capLvl < CAPACITY_COSTS.length) ? CAPACITY_COSTS[capLvl] : 0;
-                const capNextStr = (nextCap === Infinity) ? '∞' : nextCap;
-                const capCurrStr = (this.state.maxTrashQueue === Infinity) ? '∞' : this.state.maxTrashQueue;
-
                 upgradeList = [
-                    {
-                        id: 'queueCap',
-                        name: `Conveyor Capacity (${capCurrStr} ➔ ${capNextStr})`,
-                        desc: `Expands conveyor capacity from ${capCurrStr} to ${capNextStr} slots!`,
-                        cost: (capLvl < CAPACITY_COSTS.length) ? ('$' + capCost) : 'MAX',
-                        lvl: capLvl, max: CAPACITY_TIERS.length - 1, reqLvl: 1,
-                        canAfford: (capLvl < CAPACITY_COSTS.length) && (this.state.money >= capCost),
-                        action: () => {
-                            if (this.state.upgrades.queueCap.lvl < CAPACITY_COSTS.length) {
-                                const cost = CAPACITY_COSTS[this.state.upgrades.queueCap.lvl];
-                                this.state.money -= cost;
-                                this.state.upgrades.queueCap.lvl++;
-                                this.state.maxTrashQueue = CAPACITY_TIERS[this.state.upgrades.queueCap.lvl];
-                                this.renderHorizontalQueue();
-                            }
-                        }
-                    },
                     {
                         id: 'doubleToken',
                         name: 'Double Token Chance (+2%)',
@@ -2970,7 +3042,7 @@ ${uItem.desc}`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
                                 if (totalDragDistance > 8) return;
                                 if (pointer.y < viewY || pointer.y > viewBottomY) return;
                                 uItem.action();
-                                if (this.modalWalletTxt) this.modalWalletTxt.setText('$' + this.state.money + ' | 🎟️' + this.state.questTokens);
+                                if (this.modalWalletTxt) this.modalWalletTxt.setText('$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP');
                                 this.requestLayoutRebuild();
                                 this.openModal('upgrades', this.activeUpgradeCategory, true);
                             });
