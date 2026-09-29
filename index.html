@@ -75,6 +75,48 @@
         fabric:  { id: 'fabric',  name: 'Fabric', color: 0xe91e63, colorHex: '#e91e63', key: '6', items: ['Cloth', 'Old Shirt'], sprites: ['rubbish_fabric_cloth'] }
     };
 
+    const CAPACITY_TIERS = [5, 6, 7, 8, 9, 10, 20, 30, 50, 100, 200, 300, 500, Infinity];
+    const CAPACITY_COSTS = [15, 30, 50, 80, 120, 250, 500, 1000, 2500, 6000, 15000, 35000, 100000];
+
+    const RECIPES_DATA = {
+        fertilizer: {
+            id: 'fertilizer',
+            name: '🌱 Organic Fertilizer',
+            desc: 'Enriched soil additive crafted from 3 Green tokens. Sells for $30 + 35 XP!',
+            costTokens: { organic: 3 },
+            sellPrice: 30,
+            xpReward: 35,
+            reqSP: 1
+        },
+        paper_bundle: {
+            id: 'paper_bundle',
+            name: '📦 Recycled Paper Bundle',
+            desc: 'Compressed paper sheets crafted from 3 Paper tokens. Sells for $30 + 35 XP!',
+            costTokens: { paper: 3 },
+            sellPrice: 30,
+            xpReward: 35,
+            reqSP: 1
+        },
+        plastic_pellets: {
+            id: 'plastic_pellets',
+            name: '🟡 Plastic Pellets',
+            desc: 'Melted raw polymer beads crafted from 3 Plastic tokens. Sells for $30 + 35 XP!',
+            costTokens: { plastic: 3 },
+            sellPrice: 30,
+            xpReward: 35,
+            reqSP: 1
+        },
+        crushed_cullet: {
+            id: 'crushed_cullet',
+            name: '💎 Crushed Glass Cullet',
+            desc: 'Washed recycled glass shards crafted from 3 Glass tokens. Sells for $30 + 35 XP!',
+            costTokens: { glass: 3 },
+            sellPrice: 30,
+            xpReward: 35,
+            reqSP: 1
+        }
+    };
+
     class MainScene extends Phaser.Scene {
         constructor() { super({ key: 'MainScene' }); }
 
@@ -83,24 +125,30 @@
                 money: 20,
                 xp: 0,
                 level: 1,
+                skillPoints: 0,
+                unlockedRecipes: {
+                    fertilizer: false,
+                    paper_bundle: false,
+                    plastic_pellets: false,
+                    crushed_cullet: false
+                },
+                perkLuckyGate: false,
+                perkLuckyBelt: false,
                 sessionSeconds: 0,
                 totalQuestsCompleted: 0,
                 questTokens: 0,
-                questTier: 0,
 
                 // Facility Stats
                 g1Fee: 1,
                 bagValue: 1,
-                tipStockpile: 5,
                 doubleTrashChance: 0.00,
                 doubleTokenChance: 0.00,
-                maxTrashQueue: 1,
+                maxTrashQueue: 5, // Conveyor capacity starts at 5!
 
-                // Streak & Dumpster Fire System
+                // Streak System (Dumpster fire removed)
                 streak: 0,
                 streakHighScore: 0,
                 streakTimer: 0,
-                dumpsterFireActive: false,
 
                 // Customer Arrival Settings
                 customerSpawnChance: 0.30,
@@ -110,9 +158,6 @@
                 isGateAuto: false,
                 autoGateSpeed: 5000,
                 autoGateTimer: 0,
-                unlockedAutoQueue: false,
-                autoQueueSpeed: 2500,
-                autoQueueTimer: 0,
                 unlockedAutoSort: false,
                 autoSortDelay: 8000,
                 autoSortTimer: 0,
@@ -159,11 +204,10 @@
                     doubleTrash: { lvl: 0, max: 5, cost: 4, reqLvl: 2 },
                     busRush: { lvl: 0, max: 5, cost: 15, reqLvl: 4 },
 
-                    queueCap: { lvl: 0, max: 9, cost: 2, reqLvl: 1 },
-                    doubleToken: { lvl: 0, max: 5, cost: 8, reqLvl: 2 },
-                    autoQueue: { lvl: 0, max: 8, cost: 5, reqLvl: 2 },
-                    sanitiser: { lvl: 0, max: 1, cost: 5, reqLvl: 3 },
-                    autoSort: { lvl: 0, max: 5, cost: 15, reqLvl: 4 },
+                    queueCap: { lvl: 0, max: 13, cost: 15, reqLvl: 1 },
+                    doubleToken: { lvl: 0, max: 6, cost: 8, reqLvl: 2 },
+                    sanitiser: { lvl: 0, max: 1, cost: 5, reqLvl: 2 },
+                    autoSort: { lvl: 0, max: 1, cost: 10, reqLvl: 3 },
 
                     // Pets Upgrades
                     petDog: { lvl: 0, max: 1, cost: 12, reqLvl: 2 },
@@ -178,7 +222,7 @@
                     unlockFabric: { lvl: 0, max: 1, cost: 25, reqLvl: 3 }
                 },
 
-                // Bin Upgrades & Workshop Tier Unlocks
+                // Bin Upgrades
                 binUpgrades: {
                     organic: { bgUnlocked: false, shopUnlocked: false, t1Bought: false, tier2Unlocked: false, tier3Unlocked: false, reqLvlBg: 1, reqLvlShop: 1 },
                     paper:   { bgUnlocked: false, shopUnlocked: false, t1Bought: false, tier2Unlocked: false, tier3Unlocked: false, reqLvlBg: 1, reqLvlShop: 1 },
@@ -190,14 +234,9 @@
 
                 // Tutorial State
                 tutorial: {
-                    active: true,
-                    step: 1, // 1: Tip, 2: Sort, 3: Gate, 4: Upgrades, 5: Quests, 0: Done
-                    tipTapped: 0,
-                    sortProgress: 0,
-                    gateProgress: 0,
+                    active: false,
+                    step: 0,
                     visitedCategoriesSet: new Set(),
-                    step4BComplete: false,
-                    questCompletedCount: 0,
                     interactionMethod: 'drag'
                 },
 
@@ -214,10 +253,7 @@
                 // Color Tokens & Crafted Items
                 resources: { organic: 0, paper: 0, glass: 0, plastic: 0, metal: 0, fabric: 0 },
                 crafted: {
-                    fertilizer: 0, biofuel: 0, compost: 0,
-                    recycled_paper: 0, cardboard: 0, notebook: 0,
-                    glass_vase: 0, mirror: 0, lens: 0,
-                    filament: 0, plastic_brick: 0, pipe: 0
+                    fertilizer: 0, paper_bundle: 0, plastic_pellets: 0, crushed_cullet: 0
                 },
 
                 // Arcade Challenges Highscores
@@ -227,9 +263,8 @@
 
             this.trashQueue = [];
             this.customerQueue = [];
-            this.contracts = [];
-            this.craftingConveyor = [];
-            this.currentCraftJob = null;
+            this.currentCustomer = null;
+            this.customerCooldown = 0;
             this.activeModal = null;
             this.activeUpgradeCategory = 'gate';
             this.binsSubmenuOpen = true;
@@ -411,7 +446,9 @@
             // Create gentle clouds
             this.initClouds();
 
-            this.generateQuests();
+            if (!this.currentCustomer) {
+                this.generateCustomerOrder();
+            }
             this.buildLayout();
 
             for (let i = 0; i < 3; i++) this.spawnCustomer();
@@ -436,14 +473,9 @@
                     const typeMap = { '1': 'organic', '2': 'paper', '3': 'glass', '4': 'plastic', '5': 'metal', '6': 'fabric' };
                     const chosen = typeMap[e.key];
                     if (chosen && this.state.activeTypes[chosen]) {
-                        if (this.state.tutorial.active && this.state.tutorial.step === 2) {
-                            this.state.tutorial.interactionMethod = 'free';
-                        }
                         this.sortHeadTrash(chosen, 0);
                     }
                 } else if (e.code === 'Space') {
-                    this.queueTrashFromTip();
-                } else if (e.code === 'KeyC') {
                     this.triggerGate();
                 } else if (e.code === 'KeyV') {
                     this.triggerSanitiseAction();
@@ -483,42 +515,44 @@
                 loop: true
             });
 
-            // Auto-Queue Loop
+            // Auto-Sort Loop: Automatically sorts from excess queue (items beyond the 10 visible items)
             this.time.addEvent({
                 delay: 50,
                 callback: () => {
-                    if (this.state.unlockedAutoQueue) {
-                        this.state.autoQueueTimer += 50;
-                        const qProgress = Math.min(1, this.state.autoQueueTimer / this.state.autoQueueSpeed);
-                        this.drawAutoQueueProgress(qProgress);
-                        if (qProgress >= 1 && this.state.tipStockpile > 0 && this.trashQueue.length < this.state.maxTrashQueue) {
-                            this.queueTrashFromTip();
-                            this.state.autoQueueTimer = 0;
-                        }
-                    }
-                },
-                loop: true
-            });
-
-            // Auto-Sort Loop: Automatically sorts from right-to-left (tail of queue toward head)
-            this.time.addEvent({
-                delay: 50,
-                callback: () => {
-                    const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && this.trashQueue.length > 0;
+                    const hasExcess = this.trashQueue.length > 10;
+                    const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && hasExcess;
                     if (canAutoSort) {
                         this.state.autoSortTimer += 50;
                         const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
                         this.drawAutoSortProgress(sortProgress);
                         if (sortProgress >= 1) {
                             const lastIdx = this.trashQueue.length - 1;
-                            // Ensure we don't snatch an item currently being dragged
-                            if (!this.draggedItem || this.draggedItem !== this.trashQueue[lastIdx]) {
-                                this.sortHeadTrash(this.trashQueue[lastIdx].type, lastIdx);
-                                this.state.autoSortTimer = 0;
-                            }
+                            this.sortHeadTrash(this.trashQueue[lastIdx].type, lastIdx);
+                            this.state.autoSortTimer = 0;
                         }
                     } else {
                         this.drawAutoSortProgress(0);
+                    }
+                },
+                loop: true
+            });
+
+            // Customer Counter Cooldown Timer Loop
+            this.time.addEvent({
+                delay: 200,
+                callback: () => {
+                    if (this.customerCooldown > 0) {
+                        this.customerCooldown -= 200;
+                        if (this.customerCooldown <= 0) {
+                            this.customerCooldown = 0;
+                            this.generateCustomerOrder();
+                            this.requestLayoutRebuild();
+                        } else {
+                            if (this.shopWaitTxt && this.shopWaitTxt.scene) {
+                                const sec = Math.ceil(this.customerCooldown / 1000);
+                                this.shopWaitTxt.setText('🚶 Next customer arriving in ' + sec + 's...');
+                            }
+                        }
                     }
                 },
                 loop: true
@@ -680,17 +714,29 @@
         triggerGate() {
             if (this.customerQueue.length === 0) return;
 
+            const cap = this.state.maxTrashQueue;
+            if (cap !== Infinity && this.trashQueue.length >= cap) {
+                const warnTxt = this.add.text(this.gatePos.x, this.gatePos.y - 35, '⚠️ CONVEYOR FULL!', {
+                    fontSize: '12px', style: 'bold', color: '#ff3d00', backgroundColor: '#000', padding: 4
+                }).setOrigin(0.5).setDepth(30);
+                if (this.tweens && this.tweens.add) {
+                    this.tweens.add({ targets: warnTxt, y: warnTxt.y - 25, alpha: 0, duration: 800, onComplete: () => warnTxt.destroy() });
+                } else {
+                    warnTxt.destroy();
+                }
+                return;
+            }
+
             const cust = this.customerQueue.shift();
             
             this.state.money += this.state.g1Fee;
             let trashGained = 1;
             if (Math.random() < this.state.doubleTrashChance) trashGained = 2;
 
-            this.state.tipStockpile += trashGained;
-
-            if (this.state.tutorial.active && this.state.tutorial.step === 3) {
-                this.state.tutorial.gateProgress++;
-                this.generateQuests();
+            for (let i = 0; i < trashGained; i++) {
+                if (cap === Infinity || this.trashQueue.length < cap) {
+                    this.addTrashToConveyor();
+                }
             }
 
             const popTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, `+$${this.state.g1Fee} | +${trashGained} Rubbish`, {
@@ -720,7 +766,38 @@
 
             this.repositionCustomerQueue();
             this.updateUI();
-            this.requestLayoutRebuild();
+        }
+
+        addTrashToConveyor(forcedMult = null) {
+            const cap = this.state.maxTrashQueue;
+            if (cap !== Infinity && this.trashQueue.length >= cap) return;
+
+            const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+            const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+            const typeData = TRASH_TYPES[typeKey];
+            const itemName = typeData.items[Math.floor(Math.random() * typeData.items.length)];
+
+            let startMult = forcedMult;
+            if (!startMult) {
+                startMult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
+            }
+
+            const queueIndex = this.trashQueue.length;
+            let container = null;
+            if (queueIndex < 10) {
+                container = this.createItemGraphic(typeData.id, itemName, startMult);
+                container.setPosition(this.gatePos ? this.gatePos.x : 100, this.gatePos ? this.gatePos.y : 500);
+            }
+
+            this.trashQueue.push({
+                container: container,
+                type: typeData.id,
+                multiplier: startMult,
+                spriteKey: container ? container.spriteKey : null
+            });
+
+            this.renderHorizontalQueue();
+            this.updateUI();
         }
 
         updateSanitiserBtnUI() {
@@ -888,11 +965,13 @@
                 if (busClicked) return;
                 busClicked = true;
 
-                this.state.tipStockpile += 10;
+                for (let i = 0; i < 10; i++) {
+                    this.addTrashToConveyor();
+                }
                 this.updateUI();
 
-                const floatTxt = this.add.text(busContainer.x, busContainer.y - 20, '🚌 +10 RUBBISH! 🚌', {
-                    fontSize: '18px', style: 'bold', color: '#ff9800', backgroundColor: '#000000', padding: 6
+                const floatTxt = this.add.text(busContainer.x, busContainer.y - 20, '🚌 +10 RUBBISH ON CONVEYOR! 🚌', {
+                    fontSize: '15px', style: 'bold', color: '#ff9800', backgroundColor: '#000000', padding: 6
                 }).setOrigin(0.5).setDepth(230);
 
                 if (this.tweens && this.tweens.add) {
@@ -939,203 +1018,124 @@
             }
         }
 
-        getQuestPoolForTier(tier) {
-            const poolTier0 = [
-                { id_base: 't0_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 5, rewardCash: 5, color: '#4caf50' },
-                { id_base: 't0_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 5, rewardCash: 5, color: '#2196f3' },
-                { id_base: 't0_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 5, rewardCash: 5, color: '#9c27b0' },
-                { id_base: 't0_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 5, rewardCash: 5, color: '#ffeb3b' }
-            ];
-
-            const poolTier1 = [
-                { id_base: 't1_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 10, rewardCash: 15, color: '#4caf50' },
-                { id_base: 't1_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 10, rewardCash: 15, color: '#2196f3' },
-                { id_base: 't1_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 10, rewardCash: 15, color: '#9c27b0' },
-                { id_base: 't1_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 10, rewardCash: 15, color: '#ffeb3b' },
-                { id_base: 't1_fer', itemKey: 'fertilizer', name: 'Fertilizer', isResource: false, req: 2, rewardCash: 25, color: '#81c784' },
-                { id_base: 't1_rpap', itemKey: 'recycled_paper', name: 'Rec. Paper', isResource: false, req: 2, rewardCash: 30, color: '#64b5f6' },
-                { id_base: 't1_vas', itemKey: 'glass_vase', name: 'Glass Vase', isResource: false, req: 2, rewardCash: 30, color: '#ba68c8' },
-                { id_base: 't1_fil', itemKey: 'filament', name: '3D Filament', isResource: false, req: 2, rewardCash: 30, color: '#ffd54f' }
-            ];
-
-            // Tier 2: 7-10 tokens (capped at 10) & 1-3 crafted items
-            const poolTier2 = [
-                { id_base: 't2_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 8, rewardCash: 25, color: '#4caf50' },
-                { id_base: 't2_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 8, rewardCash: 25, color: '#2196f3' },
-                { id_base: 't2_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 10, rewardCash: 30, color: '#9c27b0' },
-                { id_base: 't2_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 10, rewardCash: 30, color: '#ffeb3b' },
-                { id_base: 't2_bio', itemKey: 'biofuel', name: 'Biofuel', isResource: false, req: 1, rewardCash: 50, color: '#81c784' },
-                { id_base: 't2_car', itemKey: 'cardboard', name: 'Cardboard', isResource: false, req: 2, rewardCash: 60, color: '#64b5f6' },
-                { id_base: 't2_mir', itemKey: 'mirror', name: 'Mirror', isResource: false, req: 1, rewardCash: 60, color: '#ba68c8' },
-                { id_base: 't2_bri', itemKey: 'plastic_brick', name: 'Plastic Brick', isResource: false, req: 2, rewardCash: 60, color: '#ffd54f' },
-                { id_base: 't2_fer', itemKey: 'fertilizer', name: 'Fertilizer', isResource: false, req: 2, rewardCash: 35, color: '#81c784' },
-                { id_base: 't2_rpap', itemKey: 'recycled_paper', name: 'Rec. Paper', isResource: false, req: 2, rewardCash: 40, color: '#64b5f6' },
-                { id_base: 't2_vas', itemKey: 'glass_vase', name: 'Glass Vase', isResource: false, req: 2, rewardCash: 40, color: '#ba68c8' },
-                { id_base: 't2_fil', itemKey: 'filament', name: '3D Filament', isResource: false, req: 2, rewardCash: 40, color: '#ffd54f' }
-            ];
-
-            const poolTier3 = [
-                { id_base: 't3_com', itemKey: 'compost', name: 'Compost', isResource: false, req: 3, rewardCash: 120, color: '#81c784' },
-                { id_base: 't3_not', itemKey: 'notebook', name: 'Notebook', isResource: false, req: 3, rewardCash: 130, color: '#64b5f6' },
-                { id_base: 't3_len', itemKey: 'lens', name: 'Lens', isResource: false, req: 3, rewardCash: 140, color: '#ba68c8' },
-                { id_base: 't3_pip', itemKey: 'pipe', name: 'Pipe', isResource: false, req: 3, rewardCash: 150, color: '#ffd54f' },
-                { id_base: 't3_bio', itemKey: 'biofuel', name: 'Biofuel', isResource: false, req: 3, rewardCash: 90, color: '#81c784' },
-                { id_base: 't3_car', itemKey: 'cardboard', name: 'Cardboard', isResource: false, req: 3, rewardCash: 100, color: '#64b5f6' },
-                { id_base: 't3_mir', itemKey: 'mirror', name: 'Mirror', isResource: false, req: 3, rewardCash: 105, color: '#ba68c8' },
-                { id_base: 't3_bri', itemKey: 'plastic_brick', name: 'Plastic Brick', isResource: false, req: 3, rewardCash: 105, color: '#ffd54f' },
-                { id_base: 't3_org', itemKey: 'organic', name: 'Green Tokens', isResource: true, req: 20, rewardCash: 50, color: '#4caf50' },
-                { id_base: 't3_pap', itemKey: 'paper', name: 'Paper Tokens', isResource: true, req: 20, rewardCash: 50, color: '#2196f3' },
-                { id_base: 't3_gla', itemKey: 'glass', name: 'Glass Tokens', isResource: true, req: 20, rewardCash: 60, color: '#9c27b0' },
-                { id_base: 't3_pla', itemKey: 'plastic', name: 'Plastic Tokens', isResource: true, req: 20, rewardCash: 60, color: '#ffeb3b' }
-            ];
-
-            return (tier === 0) ? poolTier0 : (tier === 1) ? poolTier1 : (tier === 2) ? poolTier2 : poolTier3;
+        getCurrentTokenCount(customer) {
+            if (!customer) return 0;
+            if (customer.isRecipe) {
+                const reqTokens = customer.costTokens;
+                const key = Object.keys(reqTokens)[0];
+                return this.state.resources[key] || 0;
+            }
+            return this.state.resources[customer.itemKey] || 0;
         }
 
-        createQuestObject(template) {
-            const uniqueId = template.id_base + '_' + Date.now() + '_' + Math.floor(Math.random()*1000);
-            return {
-                id: uniqueId,
-                itemKey: template.itemKey,
-                name: template.name,
-                isResource: template.isResource,
-                req: template.req,
-                rewardCash: template.rewardCash,
-                rewardTokens: 1,
-                color: template.color
-            };
-        }
+        generateCustomerOrder() {
+            const names = [
+                { name: 'Gardener Pete', avatar: '🧑‍🌾' },
+                { name: 'Student Mia', avatar: '🧑‍🎓' },
+                { name: 'Builder Bob', avatar: '👷' },
+                { name: 'Chef Rosa', avatar: '👩‍🍳' },
+                { name: 'Artisan Leo', avatar: '🎨' },
+                { name: 'Scientist Dr. Kim', avatar: '🧑‍🔬' },
+                { name: 'Neighbor Tom', avatar: '🧑' }
+            ];
+            const pick = names[Math.floor(Math.random() * names.length)];
 
-        replaceQuestSlot(slotIndex) {
-            const pool = this.getQuestPoolForTier(this.state.questTier);
-            const activeKeys = this.contracts
-                .filter((c, idx) => idx !== slotIndex && c && c.itemKey)
-                .map(c => c.itemKey);
-
-            let candidates = pool.filter(template => !activeKeys.includes(template.itemKey));
-            if (candidates.length === 0) candidates = pool.slice();
-
-            // CRITICAL: Prevent soft-lock! No crafting quests until player has unlocked workshops OR has at least 10 quest tokens
-            const canCraft = (this.state.unlockedWorkshopsFacility || this.state.questTokens >= 10);
-            if (!canCraft) {
-                candidates = candidates.filter(template => template.isResource === true);
-            }
-
-            // Only request active/unlocked resource types
-            candidates = candidates.filter(template => {
-                if (!template.isResource) return true;
-                return !this.state.activeTypes || this.state.activeTypes[template.itemKey] !== false;
-            });
-
-            if (candidates.length === 0) {
-                candidates = pool.filter(template => template.isResource === true);
-            }
-
-            const template = candidates[Math.floor(Math.random() * candidates.length)];
-            this.contracts[slotIndex] = this.createQuestObject(template);
-        }
-
-        generateQuests() {
-            if (this.state.tutorial.active && this.state.tutorial.step > 0) {
-                const step = this.state.tutorial.step;
-
-                if (step === 1) {
-                    this.contracts = [{
-                        id: 'tut_1', name: 'Look through rubbish', req: 1, currentVal: this.state.tutorial.tipTapped,
-                        rewardCash: 5, rewardTokens: 0, color: '#4fc3f7', isTutorial: true,
-                        onComplete: () => {
-                            this.triggerTutorialStepFanfare(1);
-                            this.state.tutorial.step = 2;
-                            this.generateQuests();
-                            this.requestLayoutRebuild();
-                        }
-                    }];
-                } else if (step === 2) {
-                    this.contracts = [{
-                        id: 'tut_2', name: 'Sort rubbish correctly', req: 5, currentVal: this.state.tutorial.sortProgress,
-                        rewardCash: 10, rewardTokens: 0, color: '#00e676', isTutorial: true,
-                        onComplete: () => {
-                            this.triggerTutorialStepFanfare(2);
-                            this.state.tutorial.step = 3;
-                            this.generateQuests();
-                            this.requestLayoutRebuild();
-                        }
-                    }];
-                } else if (step === 3) {
-                    this.contracts = [{
-                        id: 'tut_3', name: 'Get paid at Gate', req: 5, currentVal: this.state.tutorial.gateProgress,
-                        rewardCash: 15, rewardTokens: 0, color: '#ffb74d', isTutorial: true,
-                        onComplete: () => {
-                            this.triggerTutorialStepFanfare(3);
-                            this.state.tutorial.step = 4;
-                            this.generateQuests();
-                            this.requestLayoutRebuild();
-                        }
-                    }];
-                } else if (step === 4) {
-                    const queueCount = this.trashQueue.length;
-                    this.contracts = [{
-                        id: 'tut_4b', name: 'Fill 3 Queue Items', req: 3, currentVal: queueCount,
-                        rewardCash: 10, rewardTokens: 0, color: '#4fc3f7', isTutorial: true,
-                        onComplete: () => {
-                            this.triggerTutorialStepFanfare(4);
-                            this.state.tutorial.step = 5;
-                            this.generateQuests();
-                            this.requestLayoutRebuild();
-                        }
-                    }];
-                } else if (step === 5) {
-                    if (this.contracts.length === 0 || !this.contracts.some(c => c && c.id === 'tut_5a')) {
-                        this.contracts = [{
-                            id: 'tut_5a', name: 'Complete a quest', req: 1, currentVal: this.state.tutorial.questCompletedCount,
-                            rewardCash: 15, rewardTokens: 0, color: '#ffd700', isTutorial: true,
-                            onComplete: () => {
-                                this.triggerTutorialStepFanfare(5);
-                                this.state.tutorial.step = 0;
-                                this.state.tutorial.active = false;
-                                this.replaceQuestSlot(0);
-                                this.requestLayoutRebuild();
-                            }
-                        }];
-
-                        const allTypes = ['organic', 'paper', 'glass', 'plastic'].sort(() => 0.5 - Math.random());
-                        for (let i = 0; i < 2; i++) {
-                            const t = allTypes[i];
-                            const amount = Math.floor(Math.random() * 3) + 4;
-                            this.contracts.push({
-                                id: 'tut_t0_' + i, itemKey: t, name: TRASH_TYPES[t].name + ' Tokens',
-                                isResource: true, req: amount, rewardTokens: 0, rewardCash: 5, color: TRASH_TYPES[t].colorHex
-                            });
-                        }
-                    } else {
-                        if (this.contracts[0] && this.contracts[0].id === 'tut_5a') {
-                            this.contracts[0].currentVal = this.state.tutorial.questCompletedCount;
-                        }
-                    }
-                }
-                return;
-            }
-
-            // Progression Quests: MAINTAIN EXACTLY 3 FIXED QUEST SLOTS
-            if (this.contracts.some(c => c && c.isTutorial)) {
-                this.contracts = [];
-            }
-
-            while (this.contracts.length < 3) {
-                const nextIdx = this.contracts.length;
-                this.contracts.push(null);
-                this.replaceQuestSlot(nextIdx);
-            }
-
-            // AUTO-HEAL SOFT LOCK: If player cannot craft yet, replace any crafted item quests!
-            const canCraft = (this.state.unlockedWorkshopsFacility || this.state.questTokens >= 10);
-            if (!canCraft && this.contracts) {
-                this.contracts.forEach((c, idx) => {
-                    if (c && !c.isResource && !c.isTutorial) {
-                        this.replaceQuestSlot(idx);
-                    }
+            // Check if player has unlocked recipes
+            const unlockedRecipeKeys = [];
+            if (this.state.unlockedRecipes) {
+                Object.keys(this.state.unlockedRecipes).forEach(rKey => {
+                    if (this.state.unlockedRecipes[rKey]) unlockedRecipeKeys.push(rKey);
                 });
             }
+
+            const wantRecipe = (unlockedRecipeKeys.length > 0) && (Math.random() < 0.40);
+
+            if (wantRecipe) {
+                const rKey = unlockedRecipeKeys[Math.floor(Math.random() * unlockedRecipeKeys.length)];
+                const rData = RECIPES_DATA[rKey];
+                this.currentCustomer = {
+                    name: pick.name,
+                    avatar: pick.avatar,
+                    isRecipe: true,
+                    itemKey: rKey,
+                    itemName: rData.name,
+                    qty: 1,
+                    costTokens: rData.costTokens,
+                    rewardCash: rData.sellPrice,
+                    rewardXP: rData.xpReward,
+                    dialog: 'Buying 1 ' + rData.name + '!'
+                };
+            } else {
+                const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+                const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+                const typeData = TRASH_TYPES[typeKey];
+                const qty = Phaser.Math.Between(2, 4);
+                const cash = (qty * 4) + Phaser.Math.Between(3, 7);
+                const xp = (qty * 8) + 6;
+                this.currentCustomer = {
+                    name: pick.name,
+                    avatar: pick.avatar,
+                    isRecipe: false,
+                    itemKey: typeKey,
+                    itemName: typeData.name + ' Tokens',
+                    qty: qty,
+                    rewardCash: cash,
+                    rewardXP: xp,
+                    dialog: 'Need ' + qty + ' ' + typeData.name + ' tokens!'
+                };
+            }
+        }
+
+        fulfillCustomerOrder() {
+            const c = this.currentCustomer;
+            if (!c) return;
+
+            if (c.isRecipe) {
+                Object.keys(c.costTokens).forEach(tKey => {
+                    this.state.resources[tKey] -= c.costTokens[tKey];
+                });
+            } else {
+                this.state.resources[c.itemKey] -= c.qty;
+            }
+
+            this.state.money += c.rewardCash;
+            this.addXP(c.rewardXP);
+            this.state.totalQuestsCompleted = (this.state.totalQuestsCompleted || 0) + 1;
+
+            const popTxt = this.add.text(120, this.splitY ? (this.splitY + 20) : 200, '💰 +$' + c.rewardCash + ' | ⭐ +' + c.rewardXP + ' XP!', {
+                fontSize: '13px', style: 'bold', color: '#00e676', backgroundColor: '#000000', padding: 4
+            }).setOrigin(0.5).setDepth(30);
+
+            if (this.tweens && this.tweens.add) {
+                this.tweens.add({ targets: popTxt, y: popTxt.y - 30, alpha: 0, duration: 900, onComplete: () => popTxt.destroy() });
+            } else {
+                popTxt.destroy();
+            }
+
+            this.currentCustomer = null;
+            this.customerCooldown = 1500;
+            this.updateUI();
+            this.requestLayoutRebuild();
+        }
+
+        rejectCustomerOrder() {
+            const c = this.currentCustomer;
+            if (!c) return;
+
+            const popTxt = this.add.text(120, this.splitY ? (this.splitY + 20) : 200, '👋 Order skipped', {
+                fontSize: '12px', style: 'bold', color: '#ff5252', backgroundColor: '#000000', padding: 4
+            }).setOrigin(0.5).setDepth(30);
+
+            if (this.tweens && this.tweens.add) {
+                this.tweens.add({ targets: popTxt, y: popTxt.y - 25, alpha: 0, duration: 800, onComplete: () => popTxt.destroy() });
+            } else {
+                popTxt.destroy();
+            }
+
+            this.currentCustomer = null;
+            this.customerCooldown = 5000;
+            this.updateUI();
+            this.requestLayoutRebuild();
         }
 
         handleResize(gameSize) {
@@ -1240,51 +1240,8 @@
             this.renderTopHUDBar(width, topBarY, isMobile);
             this.createTopNavButtons(width);
 
-            // 1. QUESTS BOARD & ARCADE BUTTON
-            const questTitle = this.state.tutorial.active ? '📜 TUTORIAL QUESTS 📜' : ('📜 QUESTS (Tier ' + this.state.questTier + ') 📜');
-            const questHeader = this.add.text(width / 2 - 40, questY - 38, questTitle, { fontSize: '13px', style: 'bold', color: '#ffca28' }).setOrigin(0.5);
-            const tokenBadge = this.add.text(width / 2 + 115, questY - 38, '🎟️ ' + this.state.questTokens + ' QUEST TOKENS', {
-                fontSize: '11.5px', style: 'bold', color: '#ffd700', backgroundColor: '#1e293b', padding: { x: 8, y: 4 }
-            }).setOrigin(0.5);
-
-            // Arcade Launcher Button (to the left of quests)
-            const btnArcade = this.add.text(width / 2 - 165, questY - 38, '🕹️ ARCADE', {
-                fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 4 }
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-            btnArcade.on('pointerup', () => this.openArcadeModal());
-
-            this.mainContainer.add([btnArcade, questHeader, tokenBadge]);
-            this.renderContractsUI(width, questY);
-
-            // 2. WORKSHOPS
-            if (!this.state.tutorial.active) {
-                if (this.state.unlockedWorkshopsFacility) {
-                    const shopHeader = this.add.text(width / 2, workshopHeaderY, '🛠️ WORKSHOPS 🛠️', { fontSize: '15px', style: 'bold', color: '#4fc3f7' }).setOrigin(0.5);
-                    this.mainContainer.add(shopHeader);
-                    this.renderConveyorHUD(width, conveyorY);
-                    this.renderWorkshopsUI(width, logicalHeight, workshopY);
-                } else {
-                    const canAffordFacility = this.state.questTokens >= 10;
-                    const btnUnlockFacility = this.add.text(width / 2, workshopHeaderY + 20, '🛠️ BUY WORKSHOPS (10 Quest Tokens) 🛠️', {
-                        fontSize: '12px', style: 'bold',
-                        backgroundColor: canAffordFacility ? '#00e676' : '#334155',
-                        color: canAffordFacility ? '#000000' : '#ffd700',
-                        padding: { x: 12, y: 7 }
-                    }).setOrigin(0.5).setInteractive({ useHandCursor: true });
-
-                    btnUnlockFacility.on('pointerup', () => {
-                        if (this.state.questTokens >= 10) {
-                            this.state.questTokens -= 10;
-                            this.state.unlockedWorkshopsFacility = true;
-                            Object.keys(this.state.binUpgrades).forEach(bId => {
-                                this.state.binUpgrades[bId].shopUnlocked = true;
-                            });
-                            this.requestLayoutRebuild();
-                        }
-                    });
-                    this.mainContainer.add(btnUnlockFacility);
-                }
-            }
+            // 1. CUSTOMER SHOP (Top-Left of Meadow/Dirt Area)
+            this.renderCustomerShop(width, splitY);
 
             // 3. QUEUE ROW
             this.queueY = queueY;
@@ -1432,50 +1389,28 @@
             });
 
             // Streak Score Text & Dumpster Fire Bar Setup
-            this.dumpsterBarGfx = this.add.graphics();
-            const barStartX = this.bins[0].x - 38;
-            const lastBinIdx = Math.min(this.bins.length - 1, 3);
-            const barEndX = this.bins[lastBinIdx].x + 38;
-            const barCenter = Math.round((barStartX + barEndX) / 2);
-
             // Permanent Responsive Streak & High Score Badge
             this.dumpsterStreakText = this.add.text(Math.round(width / 2), binBaselineY + 36, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
                 fontSize: '12px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 4 }
             }).setOrigin(0.5);
+            this.mainContainer.add(this.dumpsterStreakText);
 
-            this.dumpsterFireBanner = this.add.text(barCenter, binBaselineY + 56, '🔥 DUMPSTER FIRE (2X TOKENS) 🔥', {
-                fontSize: '11px', style: 'bold', color: '#ffffff', backgroundColor: '#ff3d00', padding: { x: 8, y: 2 }
-            }).setOrigin(0.5).setVisible(false);
-
-            this.mainContainer.add([this.dumpsterBarGfx, this.dumpsterStreakText, this.dumpsterFireBanner]);
-
-            // 5. GATE & TIP
-            this.gatePos = { x: Math.round(width * 0.35), y: bottomY };
-            this.tipPos = { x: Math.round(width * 0.65), y: bottomY };
+            // 5. GATE (Direct Intake onto Conveyor Belt, Tip removed)
+            this.gatePos = { x: Math.round(width * 0.5), y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
-            this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE [C]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE [SPACE]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
 
             this.autoGateGfx = this.add.graphics();
-            this.autoQueueGfx = this.add.graphics();
             this.autoSortGfx = this.add.graphics().setDepth(25);
             this.longPressGfx = this.add.graphics().setDepth(10);
             this.tutorialIndicatorsGfx = this.add.graphics().setDepth(25);
 
             this.setupLongPress(this.gateSprite, 'gate');
 
-            this.tipSprite = this.add.sprite(this.tipPos.x, this.tipPos.y, 'tip').setInteractive({ useHandCursor: true });
-            this.tipLabel = this.add.text(this.tipPos.x, bottomY + 38, 'THE TIP [SPACE]', {
-                fontSize: '11px', style: 'bold', color: '#ffffff', backgroundColor: '#111827', padding: { x: 6, y: 3 }
-            }).setOrigin(0.5);
-
-            this.tipStockText = this.add.text(this.tipPos.x, bottomY, '' + this.state.tipStockpile, { fontSize: '18px', color: '#000000', style: 'bold' }).setOrigin(0.5);
-
-            this.setupLongPress(this.tipSprite, 'tip');
-
             this.mainContainer.add([
-                this.gateSprite, this.gateText, this.autoGateGfx, this.autoQueueGfx, this.autoSortGfx,
-                this.tipSprite, this.tipLabel, this.tipStockText, this.longPressGfx, this.tutorialIndicatorsGfx
+                this.gateSprite, this.gateText, this.autoGateGfx, this.autoSortGfx,
+                this.longPressGfx, this.tutorialIndicatorsGfx
             ]);
 
             if (scaleFactor < 1) {
@@ -1665,138 +1600,79 @@
             }
         }
 
-        renderContractsUI(w, y) {
-            const cardW = Math.min(w * 0.28, 125);
-            const cardH = 75;
-            const gap = 12;
-            const startX = (w - (this.contracts.length * cardW + (this.contracts.length - 1) * gap)) / 2 + (cardW / 2);
+        renderCustomerShop(w, splitY) {
+            const isMobile = (this.scale.height > this.scale.width && this.scale.width < 600);
+            const shopX = 18;
+            const shopY = splitY + 12;
+            const shopW = isMobile ? Math.min(w - 36, 310) : Math.min(Math.round(w * 0.44), 300);
+            const shopH = 82;
 
-            this.questCardPositions = [];
-            this.contractCardViews = [];
+            const shopBg = this.add.graphics();
+            shopBg.fillStyle(0x131a26, 0.95);
+            shopBg.fillRoundedRect(shopX, shopY, shopW, shopH, 8);
+            shopBg.lineStyle(2, 0x4fc3f7, 0.85);
+            shopBg.strokeRoundedRect(shopX, shopY, shopW, shopH, 8);
+            this.mainContainer.add(shopBg);
 
-            this.contracts.forEach((c, idx) => {
-                if (!c) return;
-                const cx = startX + (idx * (cardW + gap));
-                this.questCardPositions.push({ x: cx, y: y });
+            if (this.customerCooldown > 0 || !this.currentCustomer) {
+                const sec = Math.max(1, Math.ceil((this.customerCooldown || 5000) / 1000));
+                this.shopWaitTxt = this.add.text(shopX + (shopW / 2), shopY + (shopH / 2), '🚶 Next customer arriving in ' + sec + 's...', {
+                    fontSize: '11px', style: 'bold', color: '#90caf9'
+                }).setOrigin(0.5);
+                this.mainContainer.add(this.shopWaitTxt);
+                return;
+            }
 
-                const cardBg = this.add.graphics();
-                const cardHitZone = this.add.zone(cx, y + 13, cardW, cardH).setOrigin(0.5);
+            const c = this.currentCustomer;
+            const currentTokens = this.getCurrentTokenCount(c);
+            const reqTokens = c.qty;
+            const canAfford = currentTokens >= reqTokens;
 
-                let txt, btnHandIn, outlineColor;
+            // Header row: Avatar + Name
+            const avatarTxt = this.add.text(shopX + 10, shopY + 10, c.avatar || '🧑', { fontSize: '24px' });
+            const nameTxt = this.add.text(shopX + 42, shopY + 9, c.name, {
+                fontSize: '12px', style: 'bold', color: '#ffca28'
+            });
+            const orderTitle = this.add.text(shopX + shopW - 10, shopY + 10, '🛒 CUSTOMER', {
+                fontSize: '9px', style: 'bold', color: '#64b5f6', backgroundColor: '#1e293b', padding: { x: 4, y: 2 }
+            }).setOrigin(1, 0);
 
-                if (c.isTutorial) {
-                    const isDone = (c.currentVal >= c.req);
-                    outlineColor = 0xffd700;
-
-                    txt = this.add.text(cx, y - 4, c.name + '\nProgress: (' + c.currentVal + '/' + c.req + ')', {
-                        fontSize: '11px', style: 'bold', color: c.color || '#ffffff', align: 'center', wordWrap: { width: cardW - 8 }
-                    }).setOrigin(0.5);
-
-                    const btnText = isDone ? '[ COMPLETE ]' : ('(' + c.currentVal + '/' + c.req + ')');
-                    btnHandIn = this.add.text(cx, y + 24, btnText, {
-                        fontSize: '10px', style: 'bold',
-                        backgroundColor: isDone ? '#00e676' : '#334155',
-                        color: isDone ? '#000000' : '#ffd700', padding: { x: 5, y: 2 }
-                    }).setOrigin(0.5);
-
-                    cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
-                        if (c.currentVal >= c.req) {
-                            this.state.questTokens += 1;
-                            if (c.onComplete) c.onComplete();
-                        }
-                    });
-                } else {
-                    const current = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
-                    const canFulfill = current >= c.req;
-                    outlineColor = Phaser.Display.Color.ValueToColor(c.color).color;
-
-                    txt = this.add.text(cx, y - 4, c.req + ' ' + c.name + '\n(+$' + c.rewardCash + ' | +' + (c.rewardTokens || 1) + ' Tkn)', {
-                        fontSize: '11px', style: 'bold', color: c.color, align: 'center', wordWrap: { width: cardW - 8 }
-                    }).setOrigin(0.5);
-
-                    btnHandIn = this.add.text(cx, y + 24, canFulfill ? '[ TURN IN ]' : ('(' + current + '/' + c.req + ')'), {
-                        fontSize: '10px', style: 'bold',
-                        backgroundColor: canFulfill ? '#00e676' : '#424242',
-                        color: canFulfill ? '#000000' : '#aaaaaa', padding: { x: 5, y: 2 }
-                    }).setOrigin(0.5);
-
-                    cardHitZone.setInteractive({ useHandCursor: true }).on('pointerup', () => {
-                        const nowCount = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
-                        if (nowCount >= c.req) {
-                            if (c.isResource) this.state.resources[c.itemKey] -= c.req;
-                            else this.state.crafted[c.itemKey] -= c.req;
-
-                            this.state.money += c.rewardCash;
-                            this.state.questTokens += (c.rewardTokens || 1);
-                            this.state.totalQuestsCompleted++;
-                            this.state.tutorial.questCompletedCount++;
-
-                            // QUEST TIER PROGRESSION REQUIREMENTS:
-                            if (this.state.questTier === 0 && this.state.questTokens >= 3) {
-                                this.state.questTier = 1;
-                            } else if (this.state.questTier <= 1 && this.state.totalQuestsCompleted >= 15) {
-                                this.state.questTier = 2;
-                            } else if (this.state.questTier === 2 && this.state.totalQuestsCompleted >= 30) {
-                                this.state.questTier = 3;
-                            }
-
-                            this.replaceQuestSlot(idx);
-                            this.generateQuests();
-                            this.requestLayoutRebuild();
-                        }
-                    });
-                }
-
-                this.mainContainer.add([cardBg, txt, btnHandIn, cardHitZone]);
-                this.contractCardViews.push({
-                    contract: c,
-                    idx: idx,
-                    cx: cx,
-                    y: y,
-                    cardW: cardW,
-                    cardH: cardH,
-                    cardBg: cardBg,
-                    txt: txt,
-                    btnHandIn: btnHandIn,
-                    cardHitZone: cardHitZone,
-                    outlineColor: outlineColor
-                });
+            // Order detail & inventory check
+            const orderDetailTxt = this.add.text(shopX + 42, shopY + 28, c.dialog + ' (Have: ' + currentTokens + '/' + reqTokens + ')', {
+                fontSize: '10.5px', style: 'bold', color: canAfford ? '#a5d6a7' : '#ef9a9a'
             });
 
-            this.updateContractsUI();
+            // Reward display: cash & XP
+            const rewardTxt = this.add.text(shopX + 10, shopY + 54, '💵 +$' + c.rewardCash + '  ⭐ +' + c.rewardXP + ' XP', {
+                fontSize: '11px', style: 'bold', color: '#ffd700'
+            });
+
+            // Accept button
+            const btnAccept = this.add.text(shopX + shopW - 74, shopY + 50, canAfford ? '[ ACCEPT ]' : '(Need more)', {
+                fontSize: '10.5px', style: 'bold',
+                backgroundColor: canAfford ? '#2e7d32' : '#374151',
+                color: canAfford ? '#ffffff' : '#9e9e9e',
+                padding: { x: 6, y: 4 }
+            }).setOrigin(0, 0);
+
+            if (canAfford) {
+                btnAccept.setInteractive({ useHandCursor: true }).on('pointerup', () => this.fulfillCustomerOrder());
+            }
+
+            // Reject button (✕)
+            const btnReject = this.add.text(shopX + shopW - 10, shopY + 50, '✕', {
+                fontSize: '11px', style: 'bold',
+                backgroundColor: '#b71c1c', color: '#ffffff',
+                padding: { x: 6, y: 4 }
+            }).setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.rejectCustomerOrder());
+
+            this.mainContainer.add([avatarTxt, nameTxt, orderTitle, orderDetailTxt, rewardTxt, btnAccept, btnReject]);
         }
 
-        updateContractsUI() {
-            if (!this.contractCardViews || this.contractCardViews.length === 0) return;
-            this.contractCardViews.forEach(v => {
-                if (!v.contract || !v.cardBg || !v.btnHandIn || !v.cardBg.scene) return;
-                const c = v.contract;
-                if (c.isTutorial) {
-                    const isDone = (c.currentVal >= c.req);
-                    v.cardBg.clear();
-                    v.cardBg.fillStyle(isDone ? 0x1b5e20 : 0x1e293b, 0.95);
-                    v.cardBg.fillRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
-                    v.cardBg.lineStyle(2, isDone ? 0x00e676 : 0xffd700, 1);
-                    v.cardBg.strokeRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
-
-                    v.btnHandIn.setText(isDone ? '[ COMPLETE ]' : ('(' + c.currentVal + '/' + c.req + ')'));
-                    v.btnHandIn.setBackgroundColor(isDone ? '#00e676' : '#334155');
-                    v.btnHandIn.setColor(isDone ? '#000000' : '#ffd700');
-                } else {
-                    const current = c.isResource ? (this.state.resources[c.itemKey] || 0) : (this.state.crafted[c.itemKey] || 0);
-                    const canFulfill = current >= c.req;
-
-                    v.cardBg.clear();
-                    v.cardBg.fillStyle(canFulfill ? 0x1b5e20 : 0x222222, 0.95);
-                    v.cardBg.fillRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
-                    v.cardBg.lineStyle(canFulfill ? 3 : 2, canFulfill ? 0x00e676 : v.outlineColor, 1);
-                    v.cardBg.strokeRect(v.cx - (v.cardW / 2), v.y - 24, v.cardW, v.cardH);
-
-                    v.btnHandIn.setText(canFulfill ? '[ TURN IN ]' : ('(' + current + '/' + c.req + ')'));
-                    v.btnHandIn.setBackgroundColor(canFulfill ? '#00e676' : '#424242');
-                    v.btnHandIn.setColor(canFulfill ? '#000000' : '#aaaaaa');
-                }
-            });
+        updateCustomerShopUI() {
+            if (this.currentCustomer && this.mainContainer && this.mainContainer.scene) {
+                // Keep customer shop responsive
+            }
         }
 
         renderWorkshopsUI(w, h, y) {
@@ -2026,7 +1902,8 @@
             fillGfx.fillStyle(0x2e7d32, 1);
             fillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
 
-            const barText = this.add.text(w / 2, y + (barH / 2), `LEVEL ${this.state.level} (${this.state.xp}/${neededXP} XP)`, {
+            const sp = this.state.skillPoints || 0;
+            const barText = this.add.text(w / 2, y + (barH / 2), `LEVEL ${this.state.level} (${this.state.xp}/${neededXP} XP)  ⭐ ${sp} SP`, {
                 fontSize: '11px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
@@ -2176,13 +2053,18 @@
             const btnDecor = this.add.text(w - 20, 26, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
                 .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
 
-            const hasAnyAfford = this.hasCategoryAffordable('gate') || this.hasCategoryAffordable('tip') || this.hasCategoryAffordable('organic_shop');
-            this.btnUpgrades = this.add.text(w - 20, 58, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+            const hasAnyAfford = this.hasCategoryAffordable('gate') || this.hasCategoryAffordable('conveyor') || this.hasCategoryAffordable('skills');
+            this.btnUpgrades = this.add.text(w - 20, 56, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
                 .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                     this.openModal('upgrades', 'gate');
                 });
 
-            this.mainContainer.add([btnDecor, this.btnUpgrades]);
+            const btnArcade = this.add.text(w - 20, 86, '🕹️ ARCADE', { fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                    this.openArcadeModal();
+                });
+
+            this.mainContainer.add([btnDecor, this.btnUpgrades, btnArcade]);
         }
 
         createItemGraphic(typeId, itemName, forcedMultiplier = 1, fixedSpriteKey = null) {
@@ -2276,8 +2158,16 @@
 
         renderHorizontalQueue() {
             if (!this.queueCounterText) return;
-            const cap = Math.min(10, this.state.maxTrashQueue);
-            this.queueCounterText.setText(this.trashQueue.length + '/' + cap);
+            const cap = this.state.maxTrashQueue;
+            const capStr = (cap === Infinity) ? '∞' : cap;
+
+            if (this.trashQueue.length > 10) {
+                const excess = this.trashQueue.length - 10;
+                this.queueCounterText.setText('10/' + capStr + ' (+' + excess + ' queued)');
+            } else {
+                this.queueCounterText.setText(this.trashQueue.length + '/' + capStr);
+            }
+            this.queueCounterText.setColor(cap !== Infinity && this.trashQueue.length >= cap ? '#ff5252' : '#00ff00');
 
             const sFactor = (this.mainContainer && this.mainContainer.scaleX) ? this.mainContainer.scaleX : 1;
             const gap = 56 * sFactor;
@@ -2285,80 +2175,86 @@
             const qY = this.queueY * sFactor;
 
             this.trashQueue.forEach((item, index) => {
-                if (!item.container || !item.container.scene) {
-                    const fixedKey = item.spriteKey || (item.container && item.container.spriteKey);
-                    item.spriteKey = fixedKey;
-                    item.container = this.createItemGraphic(item.type, null, item.multiplier || 1, fixedKey);
-                }
+                if (index < 10) {
+                    if (!item.container || !item.container.scene) {
+                        const fixedKey = item.spriteKey || (item.container && item.container.spriteKey);
+                        item.spriteKey = fixedKey;
+                        item.container = this.createItemGraphic(item.type, null, item.multiplier || 1, fixedKey);
+                        item.container.setPosition(qStartX + (index * gap) + 30, qY);
+                    }
 
-                item.container.setScale(sFactor);
+                    item.container.setScale(sFactor);
 
-                const targetX = qStartX + (index * gap);
-                let itemAlpha = 1;
-                if (index >= 6) itemAlpha = Math.max(0.15, 1 - ((index - 5) * 0.3));
+                    const targetX = qStartX + (index * gap);
+                    let itemAlpha = 1;
+                    if (index >= 6) itemAlpha = Math.max(0.2, 1 - ((index - 5) * 0.2));
 
-                if (this.tweens && this.tweens.add) {
-                    this.tweens.add({
-                        targets: item.container,
-                        x: targetX,
-                        y: qY,
-                        alpha: itemAlpha,
-                        duration: 100
-                    });
-                } else {
-                    item.container.x = targetX;
-                    item.container.y = qY;
-                    item.container.alpha = itemAlpha;
-                }
+                    if (this.tweens && this.tweens.add) {
+                        this.tweens.add({
+                            targets: item.container,
+                            x: targetX,
+                            y: qY,
+                            alpha: itemAlpha,
+                            duration: 100
+                        });
+                    } else {
+                        item.container.x = targetX;
+                        item.container.y = qY;
+                        item.container.alpha = itemAlpha;
+                    }
 
-                if (index === 0) {
-                    this.queueHighlight.setVisible(true);
-                    this.queueHighlight.setPosition(this.queueStartX, this.queueY);
+                    if (index === 0) {
+                        this.queueHighlight.setVisible(true);
+                        this.queueHighlight.setPosition(this.queueStartX, this.queueY);
 
-                    item.container.setSize(52, 52);
-                    item.container.setInteractive({ draggable: true });
-                    this.input.setDraggable(item.container);
+                        item.container.setSize(52, 52);
+                        item.container.setInteractive({ draggable: true });
+                        this.input.setDraggable(item.container);
 
-                    item.container.off('drag');
-                    item.container.off('dragstart');
-                    item.container.off('dragend');
+                        item.container.off('drag');
+                        item.container.off('dragstart');
+                        item.container.off('dragend');
 
-                    item.container.on('dragstart', () => {
-                        this.draggedItem = item;
-                        const correctBin = this.bins.find(b => b.id === item.type);
-                        if (correctBin) correctBin.highlightGfx.setVisible(true);
-                    });
-
-                    item.container.on('drag', (pointer, dragX, dragY) => {
-                        item.container.x = dragX;
-                        item.container.y = dragY;
-                    });
-
-                    item.container.on('dragend', () => {
-                        this.bins.forEach(b => b.highlightGfx.setVisible(false));
-                        this.draggedItem = null;
-
-                        let droppedBin = null;
-                        this.bins.forEach(b => {
-                            const binWorldX = b.x * sFactor;
-                            const binWorldY = b.y * sFactor;
-                            const hitDist = 65 * sFactor;
-                            if (Phaser.Math.Distance.Between(item.container.x, item.container.y, binWorldX, binWorldY) < hitDist) {
-                                droppedBin = b;
-                            }
+                        item.container.on('dragstart', () => {
+                            this.draggedItem = item;
+                            const correctBin = this.bins.find(b => b.id === item.type);
+                            if (correctBin) correctBin.highlightGfx.setVisible(true);
                         });
 
-                        if (droppedBin) {
-                            if (this.state.tutorial.active && this.state.tutorial.step === 2) {
-                                this.state.tutorial.interactionMethod = 'tap';
+                        item.container.on('drag', (pointer, dragX, dragY) => {
+                            item.container.x = dragX;
+                            item.container.y = dragY;
+                        });
+
+                        item.container.on('dragend', () => {
+                            this.bins.forEach(b => b.highlightGfx.setVisible(false));
+                            this.draggedItem = null;
+
+                            let droppedBin = null;
+                            this.bins.forEach(b => {
+                                const binWorldX = b.x * sFactor;
+                                const binWorldY = b.y * sFactor;
+                                const hitDist = 65 * sFactor;
+                                if (Phaser.Math.Distance.Between(item.container.x, item.container.y, binWorldX, binWorldY) < hitDist) {
+                                    droppedBin = b;
+                                }
+                            });
+
+                            if (droppedBin) {
+                                this.sortHeadTrash(droppedBin.id, 0);
+                            } else {
+                                this.renderHorizontalQueue();
                             }
-                            this.sortHeadTrash(droppedBin.id, 0);
-                        } else {
-                            this.renderHorizontalQueue();
-                        }
-                    });
+                        });
+                    } else {
+                        if (item.container.input) item.container.disableInteractive();
+                    }
                 } else {
-                    if (item.container.input) item.container.disableInteractive();
+                    // Excess queue items (> 9) are kept as pure data without containers
+                    if (item.container) {
+                        item.container.destroy();
+                        item.container = null;
+                    }
                 }
             });
 
@@ -2373,13 +2269,8 @@
             const targetBin = this.bins.find(b => b.id === targetType);
             const isCorrect = (item.type === targetType);
 
-            if (this.state.tutorial.active && this.state.tutorial.step === 4) {
-                this.generateQuests();
-                this.requestLayoutRebuild();
-            }
-
-            // Tutorial Step 2: Hero rubbish shakes left-to-right and stays in hero spot on wrong sort!
-            if (!isCorrect && this.state.tutorial.active && this.state.tutorial.step === 2) {
+            // Tutorial Step 2: Hero rubbish shakes left-to-right on wrong sort
+            if (!isCorrect && this.state.tutorial.active && this.state.tutorial.step === 2 && item.container) {
                 this.trashQueue.unshift(item);
                 this.renderHorizontalQueue();
 
@@ -2401,101 +2292,62 @@
 
             this.renderHorizontalQueue();
 
-            if (targetBin) {
-                if (this.tweens && this.tweens.add) {
-                    this.tweens.add({
-                        targets: item.container,
-                        x: targetBin.x,
-                        y: targetBin.y,
-                        scale: 0.1,
-                        duration: 110,
-                        onComplete: () => {
-                            item.container.destroy();
-                            if (isCorrect) {
-                                // Play animated bin celebration safely on live bin
-                                const liveBin = (this.bins && this.bins.find(b => b.id === targetType)) || targetBin;
-                                if (liveBin && liveBin.sprite && liveBin.sprite.scene && liveBin.sprite.anims && liveBin.animKey && this.anims && this.anims.exists(liveBin.animKey)) {
-                                    try {
-                                        liveBin.sprite.play(liveBin.animKey);
-                                    } catch (e) {}
-                                }
+            const hasContainer = !!(item && item.container && item.container.scene);
+            const onSortComplete = () => {
+                if (hasContainer) item.container.destroy();
 
-                                if (isManualSort) {
-                                    this.state.streak++;
-                                    this.state.streakHighScore = Math.max(this.state.streakHighScore, this.state.streak);
-                                    this.state.streakTimer = 2000;
-                                    if (this.state.streak >= 10) {
-                                        this.state.dumpsterFireActive = true;
-                                    }
-                                }
-
-                                let mult = item.multiplier || 1;
-                                if (this.state.dumpsterFireActive) mult *= 2;
-
-                                this.state.resources[targetType] += mult;
-                                this.addXP(mult);
-
-                                let tutorialStepCompleted = false;
-                                if (this.state.tutorial.active && this.state.tutorial.step === 2) {
-                                    this.state.tutorial.sortProgress++;
-                                    this.generateQuests();
-                                    tutorialStepCompleted = true;
-                                }
-
-                                const isFire = this.state.dumpsterFireActive;
-                                const popText = isFire ? ('+' + mult + ' Tokens (FIRE 2X!)') : (mult > 1 ? ('+' + mult + ' Tokens (' + mult + 'X!)') : '+1 Token');
-                                const popOne = this.add.text(targetBin.x, targetBin.y - 15, popText, {
-                                    fontSize: '14px', style: 'bold', color: isFire ? '#ff3d00' : (mult > 1 ? '#ffd700' : '#00ff00')
-                                }).setOrigin(0.5).setDepth(20);
-
-                                if (this.tweens && this.tweens.add) {
-                                    this.tweens.add({ targets: popOne, y: popOne.y - 30, alpha: 0, duration: 850, onComplete: () => popOne.destroy() });
-                                } else {
-                                    popOne.destroy();
-                                }
-
-                                if (tutorialStepCompleted) {
-                                    this.requestLayoutRebuild();
-                                }
-                            } else {
-                                this.state.streak = 0;
-                                this.state.dumpsterFireActive = false;
-                                this.state.streakTimer = 0;
-                                if (this.cameras && this.cameras.main) this.cameras.main.flash(120, 255, 0, 0);
-                            }
-                            this.renderDumpsterFireBar();
-                            this.updateUI();
-                            this.renderHorizontalQueue();
-                        }
-                    });
-                } else {
-                    item.container.destroy();
-                    if (isCorrect) {
-                        const liveBin = (this.bins && this.bins.find(b => b.id === targetType)) || targetBin;
-                        if (liveBin && liveBin.sprite && liveBin.sprite.scene && liveBin.sprite.anims && liveBin.animKey && this.anims && this.anims.exists(liveBin.animKey)) {
-                            try {
-                                liveBin.sprite.play(liveBin.animKey);
-                            } catch (e) {}
-                        }
-                        if (isManualSort) {
-                            this.state.streak++;
-                            this.state.streakHighScore = Math.max(this.state.streakHighScore, this.state.streak);
-                            this.state.streakTimer = 2000;
-                            if (this.state.streak >= 10) this.state.dumpsterFireActive = true;
-                        }
-                        let mult = item.multiplier || 1;
-                        if (this.state.dumpsterFireActive) mult *= 2;
-                        this.state.resources[targetType] += mult;
-                        this.addXP(mult);
-                    } else {
-                        this.state.streak = 0;
-                        this.state.dumpsterFireActive = false;
-                        this.state.streakTimer = 0;
+                if (isCorrect) {
+                    const liveBin = (this.bins && this.bins.find(b => b.id === targetType)) || targetBin;
+                    if (liveBin && liveBin.sprite && liveBin.sprite.scene && liveBin.sprite.anims && liveBin.animKey && this.anims && this.anims.exists(liveBin.animKey)) {
+                        try { liveBin.sprite.play(liveBin.animKey); } catch (e) {}
                     }
-                    this.renderDumpsterFireBar();
-                    this.updateUI();
-                    this.renderHorizontalQueue();
+
+                    if (isManualSort) {
+                        this.state.streak++;
+                        this.state.streakHighScore = Math.max(this.state.streakHighScore, this.state.streak);
+                        this.state.streakTimer = 2000;
+                    }
+
+                    const mult = item.multiplier || 1;
+                    this.state.resources[targetType] += mult;
+                    this.addXP(mult);
+
+                    if (targetBin) {
+                        const popText = mult > 1 ? ('+' + mult + ' Tokens (' + mult + 'X!)') : '+1 Token';
+                        const popOne = this.add.text(targetBin.x, targetBin.y - 15, popText, {
+                            fontSize: '14px', style: 'bold', color: mult > 1 ? '#ffd700' : '#00ff00'
+                        }).setOrigin(0.5).setDepth(20);
+
+                        if (this.tweens && this.tweens.add) {
+                            this.tweens.add({ targets: popOne, y: popOne.y - 30, alpha: 0, duration: 850, onComplete: () => popOne.destroy() });
+                        } else {
+                            popOne.destroy();
+                        }
+                    }
+                } else {
+                    this.state.streak = 0;
+                    this.state.streakTimer = 0;
+                    if (this.cameras && this.cameras.main) this.cameras.main.flash(120, 255, 0, 0);
                 }
+
+                if (this.dumpsterStreakText) {
+                    this.dumpsterStreakText.setText('🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore);
+                }
+                this.updateUI();
+                this.renderHorizontalQueue();
+            };
+
+            if (hasContainer && targetBin && this.tweens && this.tweens.add) {
+                this.tweens.add({
+                    targets: item.container,
+                    x: targetBin.x,
+                    y: targetBin.y,
+                    scale: 0.1,
+                    duration: 110,
+                    onComplete: onSortComplete
+                });
+            } else {
+                onSortComplete();
             }
         }
 
@@ -2505,17 +2357,19 @@
             if (this.state.xp >= needed) {
                 this.state.xp -= needed;
                 this.state.level++;
+                this.state.skillPoints = (this.state.skillPoints || 0) + 1;
 
-                const lvlText = this.add.text(this.scale.width / 2, this.scale.height / 2, `🎉 LEVEL UP! (${this.state.level}) 🎉`, {
-                    fontSize: '26px', style: 'bold', color: '#ffd700', backgroundColor: '#000', padding: 14
+                const lvlText = this.add.text(this.scale.width / 2, this.scale.height / 2, `🎉 LEVEL UP! (Lv. ${this.state.level}) +1 Skill Point! 🎉`, {
+                    fontSize: '22px', style: 'bold', color: '#ffd700', backgroundColor: '#000000', padding: 12
                 }).setOrigin(0.5).setDepth(30);
 
                 if (this.tweens && this.tweens.add) {
-                    this.tweens.add({ targets: lvlText, scale: 1.3, alpha: 0, duration: 1600, onComplete: () => lvlText.destroy() });
+                    this.tweens.add({ targets: lvlText, scale: 1.25, alpha: 0, duration: 1600, onComplete: () => lvlText.destroy() });
                 } else {
                     lvlText.destroy();
                 }
             }
+            this.updateUI();
         }
 
         closeModal() {
@@ -2679,28 +2533,37 @@
                         }
                     }
                 ];
-            } else if (catKey === 'tip') {
+            } else if (catKey === 'conveyor') {
+                const capLvl = this.state.upgrades.queueCap.lvl;
+                const nextCap = (capLvl < CAPACITY_TIERS.length - 1) ? CAPACITY_TIERS[capLvl + 1] : CAPACITY_TIERS[CAPACITY_TIERS.length - 1];
+                const capCost = (capLvl < CAPACITY_COSTS.length) ? CAPACITY_COSTS[capLvl] : 0;
+                const capNextStr = (nextCap === Infinity) ? '∞' : nextCap;
+                const capCurrStr = (this.state.maxTrashQueue === Infinity) ? '∞' : this.state.maxTrashQueue;
+
                 upgradeList = [
                     {
                         id: 'queueCap',
-                        name: 'Queue Capacity (+1)',
-                        desc: `Cap: ${this.state.maxTrashQueue} ➔ ${this.state.maxTrashQueue + 1} (+1 trash slot)`,
-                        cost: '$' + this.state.upgrades.queueCap.cost,
-                        lvl: this.state.upgrades.queueCap.lvl, max: 9, reqLvl: 1,
-                        canAfford: this.state.money >= this.state.upgrades.queueCap.cost,
+                        name: `Conveyor Capacity (${capCurrStr} ➔ ${capNextStr})`,
+                        desc: `Expands conveyor capacity from ${capCurrStr} to ${capNextStr} slots!`,
+                        cost: (capLvl < CAPACITY_COSTS.length) ? ('$' + capCost) : 'MAX',
+                        lvl: capLvl, max: CAPACITY_TIERS.length - 1, reqLvl: 1,
+                        canAfford: (capLvl < CAPACITY_COSTS.length) && (this.state.money >= capCost),
                         action: () => {
-                            this.state.money -= this.state.upgrades.queueCap.cost;
-                            this.state.maxTrashQueue++;
-                            this.state.upgrades.queueCap.lvl++;
-                            this.state.upgrades.queueCap.cost *= 2;
+                            if (this.state.upgrades.queueCap.lvl < CAPACITY_COSTS.length) {
+                                const cost = CAPACITY_COSTS[this.state.upgrades.queueCap.lvl];
+                                this.state.money -= cost;
+                                this.state.upgrades.queueCap.lvl++;
+                                this.state.maxTrashQueue = CAPACITY_TIERS[this.state.upgrades.queueCap.lvl];
+                                this.renderHorizontalQueue();
+                            }
                         }
                     },
                     {
                         id: 'doubleToken',
-                        name: 'Double Token Chance',
-                        desc: `Double chance: ${(this.state.doubleTokenChance * 100).toFixed(0)}% ➔ ${(this.state.doubleTokenChance * 100 + 2).toFixed(0)}% (+2%)`,
+                        name: 'Double Token Chance (+2%)',
+                        desc: `Belts have a ${(this.state.doubleTokenChance * 100).toFixed(0)}% ➔ ${(this.state.doubleTokenChance * 100 + 2).toFixed(0)}% chance to spawn with 2X multiplier!`,
                         cost: '$' + this.state.upgrades.doubleToken.cost,
-                        lvl: this.state.upgrades.doubleToken.lvl, max: 5, reqLvl: 2,
+                        lvl: this.state.upgrades.doubleToken.lvl, max: 6, reqLvl: 2,
                         canAfford: this.state.money >= this.state.upgrades.doubleToken.cost,
                         action: () => {
                             this.state.money -= this.state.upgrades.doubleToken.cost;
@@ -2710,53 +2573,38 @@
                         }
                     },
                     {
-                        id: 'autoQueue',
-                        name: 'Auto-Queue Feeder',
-                        desc: !this.state.unlockedAutoQueue
-                            ? 'Unlocks automated queue drawer from tip'
-                            : `Speed: ${(this.state.autoQueueSpeed / 1000).toFixed(1)}s ➔ ${(Math.max(200, this.state.autoQueueSpeed - 350) / 1000).toFixed(1)}s (-0.35s)`,
-                        cost: '$' + this.state.upgrades.autoQueue.cost,
-                        lvl: this.state.upgrades.autoQueue.lvl, max: 8, reqLvl: 2,
-                        canAfford: this.state.money >= this.state.upgrades.autoQueue.cost,
-                        action: () => {
-                            this.state.money -= this.state.upgrades.autoQueue.cost;
-                            if (!this.state.unlockedAutoQueue) this.state.unlockedAutoQueue = true;
-                            else this.state.autoQueueSpeed = Math.max(200, this.state.autoQueueSpeed - 350);
-                            this.state.upgrades.autoQueue.lvl++;
-                            this.state.upgrades.autoQueue.cost *= 2;
-                        }
-                    },
-                    {
                         id: 'sanitiser',
                         name: 'Sanitiser Station',
-                        desc: 'Unlocks SANITISE button: Double (2X) or Quad (4X) head item tokens!',
-                        cost: '5 Tokens',
-                        lvl: this.state.upgrades.sanitiser.lvl, max: 1, reqLvl: 3,
-                        canAfford: !this.state.unlockedSanitiser && this.state.questTokens >= 5,
+                        desc: 'Unlocks SANITISE button: Double (2X) or Quad (4X) head item tokens on conveyor!',
+                        cost: '$15',
+                        lvl: this.state.upgrades.sanitiser.lvl, max: 1, reqLvl: 2,
+                        canAfford: !this.state.unlockedSanitiser && this.state.money >= 15,
                         action: () => {
-                            this.state.questTokens -= 5;
+                            this.state.money -= 15;
                             this.state.unlockedSanitiser = true;
                             this.state.upgrades.sanitiser.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
                     {
                         id: 'autoSort',
-                        name: 'Auto Sort (Right-to-Left, 8s)',
-                        desc: 'Auto sorts right-most queue item every 8 seconds',
-                        cost: '15 Tokens',
-                        lvl: this.state.upgrades.autoSort.lvl, max: 5, reqLvl: 4,
-                        canAfford: this.state.questTokens >= 15,
+                        name: 'Auto-Sort From Excess (8s)',
+                        desc: 'Sorts items from excess queue (+queued) right-to-left every 8s while leaving visible 10 items untouched!',
+                        cost: '$25',
+                        lvl: this.state.upgrades.autoSort.lvl, max: 1, reqLvl: 3,
+                        canAfford: !this.state.unlockedAutoSort && this.state.money >= 25,
                         action: () => {
-                            this.state.questTokens -= 15;
+                            this.state.money -= 25;
                             this.state.unlockedAutoSort = true;
-                            this.state.upgrades.autoSort.lvl++;
+                            this.state.upgrades.autoSort.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
-                    // PET QUEUE HELPERS
+                    // PET CONVEYOR HELPERS
                     {
                         id: 'petDog',
                         name: '🐶 Dog Helper',
-                        desc: 'Button sweeps & cashes in ALL Paper (Blue) items from queue!',
+                        desc: 'Button sweeps & cashes in ALL Paper (Blue) items from conveyor!',
                         cost: '$' + this.state.upgrades.petDog.cost,
                         lvl: this.state.pets.dog ? 1 : 0, max: 1, reqLvl: 2,
                         canAfford: !this.state.pets.dog && this.state.money >= this.state.upgrades.petDog.cost,
@@ -2764,12 +2612,13 @@
                             this.state.money -= this.state.upgrades.petDog.cost;
                             this.state.pets.dog = true;
                             this.state.upgrades.petDog.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
                     {
                         id: 'petChicken',
                         name: '🐔 Chicken Helper',
-                        desc: 'Button sweeps & cashes in ALL Organic (Green) items from queue!',
+                        desc: 'Button sweeps & cashes in ALL Organic (Green) items from conveyor!',
                         cost: '$' + this.state.upgrades.petChicken.cost,
                         lvl: this.state.pets.chicken ? 1 : 0, max: 1, reqLvl: 2,
                         canAfford: !this.state.pets.chicken && this.state.money >= this.state.upgrades.petChicken.cost,
@@ -2777,12 +2626,13 @@
                             this.state.money -= this.state.upgrades.petChicken.cost;
                             this.state.pets.chicken = true;
                             this.state.upgrades.petChicken.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
                     {
                         id: 'petTurtle',
                         name: '🐢 Turtle Helper',
-                        desc: 'Button sweeps & cashes in ALL Plastic (Yellow) items from queue!',
+                        desc: 'Button sweeps & cashes in ALL Plastic (Yellow) items from conveyor!',
                         cost: '$' + this.state.upgrades.petTurtle.cost,
                         lvl: this.state.pets.turtle ? 1 : 0, max: 1, reqLvl: 2,
                         canAfford: !this.state.pets.turtle && this.state.money >= this.state.upgrades.petTurtle.cost,
@@ -2790,12 +2640,13 @@
                             this.state.money -= this.state.upgrades.petTurtle.cost;
                             this.state.pets.turtle = true;
                             this.state.upgrades.petTurtle.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
                     {
                         id: 'petFlashlight',
                         name: '🔦 Torch Helper',
-                        desc: 'Button sweeps & cashes in ALL Glass (Purple) items from queue!',
+                        desc: 'Button sweeps & cashes in ALL Glass (Purple) items from conveyor!',
                         cost: '$' + this.state.upgrades.petFlashlight.cost,
                         lvl: this.state.pets.flashlight ? 1 : 0, max: 1, reqLvl: 3,
                         canAfford: !this.state.pets.flashlight && this.state.money >= this.state.upgrades.petFlashlight.cost,
@@ -2803,6 +2654,7 @@
                             this.state.money -= this.state.upgrades.petFlashlight.cost;
                             this.state.pets.flashlight = true;
                             this.state.upgrades.petFlashlight.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
                     {
@@ -2818,6 +2670,7 @@
                             this.state.activeTypes.metal = true;
                             this.state.pets.magnet = true;
                             this.state.upgrades.unlockMetal.lvl = 1;
+                            this.requestLayoutRebuild();
                         }
                     },
                     {
@@ -2833,6 +2686,85 @@
                             this.state.activeTypes.fabric = true;
                             this.state.pets.cat = true;
                             this.state.upgrades.unlockFabric.lvl = 1;
+                            this.requestLayoutRebuild();
+                        }
+                    }
+                ];
+            } else if (catKey === 'skills') {
+                const sp = this.state.skillPoints || 0;
+                upgradeList = [
+                    {
+                        id: 'skill_fertilizer',
+                        name: RECIPES_DATA.fertilizer.name,
+                        desc: RECIPES_DATA.fertilizer.desc,
+                        cost: '1 SP',
+                        lvl: this.state.unlockedRecipes.fertilizer ? 1 : 0, max: 1, reqLvl: 1,
+                        canAfford: !this.state.unlockedRecipes.fertilizer && sp >= 1,
+                        action: () => {
+                            this.state.skillPoints -= 1;
+                            this.state.unlockedRecipes.fertilizer = true;
+                        }
+                    },
+                    {
+                        id: 'skill_paper',
+                        name: RECIPES_DATA.paper_bundle.name,
+                        desc: RECIPES_DATA.paper_bundle.desc,
+                        cost: '1 SP',
+                        lvl: this.state.unlockedRecipes.paper_bundle ? 1 : 0, max: 1, reqLvl: 1,
+                        canAfford: !this.state.unlockedRecipes.paper_bundle && sp >= 1,
+                        action: () => {
+                            this.state.skillPoints -= 1;
+                            this.state.unlockedRecipes.paper_bundle = true;
+                        }
+                    },
+                    {
+                        id: 'skill_plastic',
+                        name: RECIPES_DATA.plastic_pellets.name,
+                        desc: RECIPES_DATA.plastic_pellets.desc,
+                        cost: '1 SP',
+                        lvl: this.state.unlockedRecipes.plastic_pellets ? 1 : 0, max: 1, reqLvl: 1,
+                        canAfford: !this.state.unlockedRecipes.plastic_pellets && sp >= 1,
+                        action: () => {
+                            this.state.skillPoints -= 1;
+                            this.state.unlockedRecipes.plastic_pellets = true;
+                        }
+                    },
+                    {
+                        id: 'skill_cullet',
+                        name: RECIPES_DATA.crushed_cullet.name,
+                        desc: RECIPES_DATA.crushed_cullet.desc,
+                        cost: '1 SP',
+                        lvl: this.state.unlockedRecipes.crushed_cullet ? 1 : 0, max: 1, reqLvl: 1,
+                        canAfford: !this.state.unlockedRecipes.crushed_cullet && sp >= 1,
+                        action: () => {
+                            this.state.skillPoints -= 1;
+                            this.state.unlockedRecipes.crushed_cullet = true;
+                        }
+                    },
+                    {
+                        id: 'skill_lucky_gate',
+                        name: '🍀 Lucky Gate (+15% Double Rubbish)',
+                        desc: 'Passive: Boosts Gate Double Rubbish chance by +15%!',
+                        cost: '1 SP',
+                        lvl: this.state.perkLuckyGate ? 1 : 0, max: 1, reqLvl: 1,
+                        canAfford: !this.state.perkLuckyGate && sp >= 1,
+                        action: () => {
+                            this.state.skillPoints -= 1;
+                            this.state.perkLuckyGate = true;
+                            this.state.doubleTrashChance += 0.15;
+                        }
+                    },
+                    {
+                        id: 'skill_lucky_belt',
+                        name: '⚡ Lucky Belt (+15% Double Tokens)',
+                        desc: 'Passive: Boosts Conveyor Double Token chance by +15%!',
+                        cost: '1 SP',
+                        lvl: this.state.perkLuckyBelt ? 1 : 0, max: 1, reqLvl: 1,
+                        canAfford: !this.state.perkLuckyBelt && sp >= 1,
+                        action: () => {
+                            this.state.skillPoints -= 1;
+                            this.state.perkLuckyBelt = true;
+                            this.state.doubleTokenChance += 0.15;
                         }
                     }
                 ];
@@ -2870,7 +2802,7 @@
             const sidebarW = 125;
 
             const title = this.add.text(boxLeft + 15, 18, '🛠️ UPGRADES & STATIONS', { fontSize: '14px', style: 'bold', color: '#4fc3f7' });
-            this.modalWalletTxt = this.add.text(boxLeft + boxW - 130, 18, '$' + this.state.money + ' | 🎟️' + this.state.questTokens, { fontSize: '11px', style: 'bold', color: '#00ff00' });
+            this.modalWalletTxt = this.add.text(boxLeft + boxW - 140, 18, '$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP', { fontSize: '11px', style: 'bold', color: '#00ff00' });
             this.modalContainer.add([title, this.modalWalletTxt]);
 
             let currY = 46;
@@ -2886,15 +2818,26 @@
             this.modalContainer.add(btnGate);
             currY += 28;
 
-            const isTipSel = (this.activeUpgradeCategory === 'tip');
-            const hasTipAff = this.hasCategoryAffordable('tip');
-            const btnTip = this.add.text(boxLeft + 12, currY, hasTipAff ? '🗑️ Tip/Queue (!)' : '🗑️ Tip/Queue', {
+            const isConveyorSel = (this.activeUpgradeCategory === 'conveyor');
+            const hasConveyorAff = this.hasCategoryAffordable('conveyor');
+            const btnConveyor = this.add.text(boxLeft + 12, currY, hasConveyorAff ? '🔄 Conveyor (!)' : '🔄 Conveyor', {
                 fontSize: '11px', style: 'bold',
-                backgroundColor: isTipSel ? '#0288d1' : '#2b2b2b',
-                color: isTipSel ? '#ffffff' : (hasTipAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+                backgroundColor: isConveyorSel ? '#0288d1' : '#2b2b2b',
+                color: isConveyorSel ? '#ffffff' : (hasConveyorAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
             }).setInteractive({ useHandCursor: true });
-            btnTip.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'tip'; this.openModal('upgrades', 'tip'); });
-            this.modalContainer.add(btnTip);
+            btnConveyor.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'conveyor'; this.openModal('upgrades', 'conveyor'); });
+            this.modalContainer.add(btnConveyor);
+            currY += 28;
+
+            const isSkillsSel = (this.activeUpgradeCategory === 'skills');
+            const hasSkillsAff = this.hasCategoryAffordable('skills');
+            const btnSkills = this.add.text(boxLeft + 12, currY, hasSkillsAff ? '⭐ Skills (!)' : '⭐ Skills', {
+                fontSize: '11px', style: 'bold',
+                backgroundColor: isSkillsSel ? '#0288d1' : '#2b2b2b',
+                color: isSkillsSel ? '#ffffff' : (hasSkillsAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+            }).setInteractive({ useHandCursor: true });
+            btnSkills.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'skills'; this.openModal('upgrades', 'skills'); });
+            this.modalContainer.add(btnSkills);
             currY += 28;
 
             const btnBinsHeader = this.add.text(boxLeft + 12, currY, this.binsSubmenuOpen ? '🚮 Bins ▼' : '🚮 Bins ▶', {
@@ -3625,7 +3568,7 @@ ${uItem.desc}`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
             if (this.hudTextObj) {
                 const r = this.state.resources;
                 const hasExtraTypes = (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric);
-                let text = '💵 Cash: $' + this.state.money + '  |  🎟️ Tkns: ' + this.state.questTokens + '\n' +
+                let text = '💵 Cash: $' + this.state.money + '  |  ⭐ SP: ' + (this.state.skillPoints || 0) + '\n' +
                            '🟢 Organic: ' + r.organic + '   🔵 Paper: ' + r.paper + '\n' +
                            '🟡 Plastic: ' + r.plastic + '   🟣 Glass: ' + r.glass;
                 if (hasExtraTypes) {
@@ -3636,11 +3579,7 @@ ${uItem.desc}`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
                 this.hudTextObj.setText(text);
             }
             if (this.modalWalletTxt && this.activeModal === 'upgrades') {
-                this.modalWalletTxt.setText('$' + this.state.money + ' | 🎟️' + this.state.questTokens);
-            }
-
-            if (this.tipStockText) {
-                this.tipStockText.setText('' + this.state.tipStockpile);
+                this.modalWalletTxt.setText('$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP');
             }
 
             if (this.bins) {
@@ -3651,15 +3590,11 @@ ${uItem.desc}`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
                 });
             }
 
-            if (this.tipSprite) {
-                if (this.state.tipStockpile === 0) {
-                    this.tipSprite.setAlpha(0.3);
-                } else {
-                    this.tipSprite.setAlpha(1);
-                }
+            if (this.dumpsterStreakText) {
+                this.dumpsterStreakText.setText('🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore);
             }
 
-            this.updateContractsUI();
+            this.updateCustomerShopUI();
         }
     }
 
