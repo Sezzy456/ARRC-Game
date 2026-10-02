@@ -158,9 +158,9 @@ const htmlContent = `<!DOCTYPE html>
                 streakHighScore: 0,
                 streakTimer: 0,
 
-                // Customer Arrival Settings (Tuned so player can clear queue and feel cleaned up)
-                customerSpawnChance: 0.25,
-                spawnDelay: 2500,
+                // Customer Arrival Settings (Fast original arrival rate: 85% every 1000ms)
+                customerSpawnChance: 0.85,
+                spawnDelay: 1000,
                 excessTrashCount: 0,
                 factoryUnlocked: false,
 
@@ -507,76 +507,47 @@ const htmlContent = `<!DOCTYPE html>
                 }
             });
 
-            // Customer Spawner Loop
-            this.spawnerEvent = this.time.addEvent({
-                delay: (this.state.spawnDelay || 2500),
-                callback: () => {
-                    if (Math.random() < this.state.customerSpawnChance) {
-                        this.spawnCustomer();
+            // Prevent Phaser from auto-pausing on blur/hidden for genuine idle/AFK execution
+            if (this.game) {
+                if (this.game.events) {
+                    this.game.events.off(Phaser.Core.Events.HIDDEN);
+                    this.game.events.off(Phaser.Core.Events.BLUR);
+                }
+                this.game.onHidden = function() {};
+                this.game.onBlur = function() {};
+                if (this.game.loop) {
+                    this.game.loop.pause = function() {};
+                }
+            }
+
+            // Centralized Real-Time Simulation Clock (Supports active 60fps & background tab AFK)
+            this.lastTickTime = Date.now();
+            if (typeof window !== 'undefined') {
+                if (this.afkInterval) clearInterval(this.afkInterval);
+                this.afkInterval = setInterval(() => {
+                    const now = Date.now();
+                    const dt = Math.max(0, now - (this.lastTickTime || now));
+                    if (dt >= 120) {
+                        this.lastTickTime = now;
+                        this.tickGameSimulation(dt);
                     }
-                },
-                loop: true
-            });
+                }, 150);
+
+                window.addEventListener('focus', () => {
+                    const now = Date.now();
+                    const dt = Math.max(0, now - (this.lastTickTime || now));
+                    this.lastTickTime = now;
+                    if (dt > 100) {
+                        this.tickGameSimulation(dt);
+                    }
+                    this.repositionCustomerQueue();
+                    this.renderHorizontalQueue();
+                    this.updateUI();
+                });
+            }
 
             // Bus Rush Event Loop with frequency tracking
             this.scheduleBusRush();
-
-            // Auto-Gate Loop
-            this.time.addEvent({
-                delay: 50,
-                callback: () => {
-                    if (this.state.isGateAuto) {
-                        this.state.autoGateTimer += 50;
-                        const progress = Math.min(1, this.state.autoGateTimer / this.state.autoGateSpeed);
-                        this.drawAutoGateProgress(progress);
-                        if (progress >= 1 && this.customerQueue.length > 0) {
-                            this.triggerGate();
-                            this.state.autoGateTimer = 0;
-                        }
-                    }
-                },
-                loop: true
-            });
-
-            // Auto-Sort Loop: Automatically sorts from excess queue (items beyond the 10 visible items)
-            this.time.addEvent({
-                delay: 50,
-                callback: () => {
-                    const hasExcess = (this.state.excessTrashCount || 0) > 0;
-                    const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && hasExcess;
-                    if (canAutoSort) {
-                        this.state.autoSortTimer += 50;
-                        const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
-                        this.drawAutoSortProgress(sortProgress);
-                        if (sortProgress >= 1) {
-                            this.state.excessTrashCount--;
-                            const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
-                            const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
-                            const mult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
-                            this.state.resources[typeKey] += mult;
-                            this.state.money += 1;
-                            this.addXP(mult);
-                            this.state.autoSortTimer = 0;
-                            this.renderHorizontalQueue();
-                            this.updateUI();
-                        }
-                    } else {
-                        this.drawAutoSortProgress(0);
-                    }
-                },
-                loop: true
-            });
-
-            // Meadow Shop Customer Replenishment Loop (Up to 3 in line above dirt)
-            this.time.addEvent({
-                delay: 2000,
-                callback: () => {
-                    if (this.shopCustomers && this.shopCustomers.length < 3) {
-                        this.spawnShopCustomer(false);
-                    }
-                },
-                loop: true
-            });
 
             // Pulsing Indicators Loop
             this.time.addEvent({
@@ -619,28 +590,17 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         update(time, delta) {
+            const now = Date.now();
+            const dt = Math.max(0, Math.min(2000, now - (this.lastTickTime || now)));
+            this.lastTickTime = now;
+            this.tickGameSimulation(dt);
+
             if (this.clouds && this.clouds.length > 0) {
                 const w = this.scale.width || 800;
                 this.clouds.forEach(c => {
                     c.x += (c.speed || 0.02) * delta;
                     if (c.x > w + 80) c.x = -80;
                 });
-            }
-
-            if (this.state && this.state.streakTimer > 0) {
-                this.state.streakTimer = Math.max(0, this.state.streakTimer - delta);
-                if (this.state.streakTimer <= 0) {
-                    this.state.streak = 0;
-                    this.state.dumpsterFireActive = false;
-                }
-                this.renderDumpsterFireBar();
-            } else if (this.state) {
-                this.renderDumpsterFireBar();
-            }
-
-            if (this.state && this.state.sanitiserCooldown > 0) {
-                this.state.sanitiserCooldown = Math.max(0, this.state.sanitiserCooldown - delta);
-                this.updateSanitiserBtnUI();
             }
 
             if (this.activeModal === 'upgrades') {
@@ -657,6 +617,95 @@ const htmlContent = `<!DOCTYPE html>
             if (this.arcadeState && this.arcadeState.active) {
                 this.updateArcade(delta);
             }
+        }
+
+        tickGameSimulation(dt) {
+            if (!this.state || (this.arcadeState && this.arcadeState.active)) return;
+
+            // 1. Customer Arrivals (Original fast rate: 85% every 1000ms)
+            this.spawnAccumulator = (this.spawnAccumulator || 0) + dt;
+            const sDelay = this.state.spawnDelay || 1000;
+            while (this.spawnAccumulator >= sDelay) {
+                this.spawnAccumulator -= sDelay;
+                if (Math.random() < this.state.customerSpawnChance) {
+                    if (this.customerQueue.length < 8) {
+                        this.spawnCustomer();
+                    }
+                }
+            }
+
+            // 2. Auto-Gate System
+            if (this.state.isGateAuto) {
+                this.state.autoGateTimer = (this.state.autoGateTimer || 0) + dt;
+                while (this.state.autoGateTimer >= this.state.autoGateSpeed && this.customerQueue.length > 0) {
+                    this.state.autoGateTimer -= this.state.autoGateSpeed;
+                    this.triggerGate();
+                }
+                if (this.customerQueue.length === 0 && this.state.autoGateTimer > this.state.autoGateSpeed) {
+                    this.state.autoGateTimer = this.state.autoGateSpeed;
+                }
+                const progress = Math.min(1, this.state.autoGateTimer / this.state.autoGateSpeed);
+                this.drawAutoGateProgress(progress);
+            } else {
+                this.drawAutoGateProgress(0);
+            }
+
+            // 3. Auto-Sort System (pulls from excess queue items beyond visible 10)
+            const hasExcess = (this.state.excessTrashCount || 0) > 0;
+            const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && hasExcess;
+            if (canAutoSort) {
+                this.state.autoSortTimer = (this.state.autoSortTimer || 0) + dt;
+                while (this.state.autoSortTimer >= this.state.autoSortDelay && (this.state.excessTrashCount || 0) > 0) {
+                    this.state.autoSortTimer -= this.state.autoSortDelay;
+                    this.state.excessTrashCount--;
+                    const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+                    const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+                    const mult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
+                    this.state.resources[typeKey] += mult;
+                    this.state.money += 1;
+                    this.addXP(mult);
+                    this.renderHorizontalQueue();
+                }
+                const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
+                this.drawAutoSortProgress(sortProgress);
+            } else {
+                this.drawAutoSortProgress(0);
+            }
+
+            // 4. Streak Timer & Bar
+            if (this.state.streakTimer > 0) {
+                this.state.streakTimer = Math.max(0, this.state.streakTimer - dt);
+                if (this.state.streakTimer <= 0) {
+                    this.state.streak = 0;
+                    this.state.dumpsterFireActive = false;
+                }
+            }
+            this.renderDumpsterFireBar();
+
+            // 5. Sanitiser Station Cooldown
+            if (this.state.sanitiserCooldown > 0) {
+                this.state.sanitiserCooldown = Math.max(0, this.state.sanitiserCooldown - dt);
+                this.updateSanitiserBtnUI();
+            }
+
+            // 6. Meadow Shop Customer Replenishment (Up to 3 in line above horizon)
+            this.shopCustTimer = (this.shopCustTimer || 0) + dt;
+            if (this.shopCustTimer >= 2000) {
+                this.shopCustTimer = 0;
+                if (!this.shopCustomers || this.shopCustomers.length < 3) {
+                    this.spawnShopCustomer(false);
+                }
+            }
+
+            // 7. Ensure waiting customers stay visibly on screen and never freeze
+            if (this.customerQueue && this.customerQueue.length > 0) {
+                const firstCust = this.customerQueue[0];
+                if (firstCust && firstCust.x < 10 && (!this.tweens || !this.tweens.isTweening(firstCust))) {
+                    this.repositionCustomerQueue();
+                }
+            }
+
+            this.updateUI();
         }
 
         renderDumpsterFireBar() {
@@ -710,7 +759,7 @@ const htmlContent = `<!DOCTYPE html>
             const personSprite = this.add.sprite(0, 0, 'person');
             const bagSprite = this.add.sprite(0, 10, 'bag');
 
-            const customerContainer = this.add.container(-50, this.gatePos ? this.gatePos.y : 600, [personSprite, bagSprite]).setDepth(15);
+            const customerContainer = this.add.container(-25, this.gatePos ? this.gatePos.y : 600, [personSprite, bagSprite]).setDepth(15);
             if (this.mainContainer) this.mainContainer.add(customerContainer);
             this.customerQueue.push(customerContainer);
             this.repositionCustomerQueue();
@@ -718,17 +767,26 @@ const htmlContent = `<!DOCTYPE html>
 
         repositionCustomerQueue() {
             if (!this.gatePos) return;
-            const startX = this.gatePos.x - 45;
-            const spacing = 28;
+            const count = this.customerQueue.length;
+            // Customer 0 stands right at the gate entrance counter
+            const startX = this.gatePos.x - 22;
+            const minMargin = 16;
+            const availableW = Math.max(60, startX - minMargin);
+            const maxSpacing = 28;
+            const spacing = count > 1 ? Math.min(maxSpacing, availableW / (count - 1)) : maxSpacing;
 
             this.customerQueue.forEach((cust, idx) => {
-                const targetX = startX - (idx * spacing);
-                if (this.tweens && this.tweens.add) {
+                const targetX = Math.round(startX - (idx * spacing));
+                if (this.tweens) {
+                    this.tweens.killTweensOf(cust);
+                    const dist = Math.abs(cust.x - targetX);
+                    const duration = Math.min(280, Math.max(100, Math.round(dist * 1.0)));
                     this.tweens.add({
                         targets: cust,
                         x: targetX,
                         y: this.gatePos.y,
-                        duration: 200
+                        duration: duration,
+                        ease: 'Power1'
                     });
                 } else {
                     cust.x = targetX;
@@ -832,8 +890,7 @@ const htmlContent = `<!DOCTYPE html>
                 const startMult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
                 const container = this.createItemGraphic(typeData.id, itemName, startMult);
                 const itemIdx = this.trashQueue.length;
-                const gap = this.queueGap || 50;
-                container.setPosition(this.queueStartX + (itemIdx * gap), this.queueY);
+                container.setPosition(this.getQueueSlotX(itemIdx), this.queueY);
 
                 this.trashQueue.push({
                     container: container,
@@ -974,7 +1031,7 @@ const htmlContent = `<!DOCTYPE html>
         triggerBusRushEvent() {
             if (this.activeBusContainer && this.activeBusContainer.active) return;
             const w = this.scale.width;
-            const y = this.gatePos ? this.gatePos.y + 20 : 620;
+            const y = this.busY || (this.scale.height - 40);
 
             const busContainer = this.add.container(-140, y).setDepth(200);
             this.activeBusContainer = busContainer;
@@ -1401,21 +1458,41 @@ const htmlContent = `<!DOCTYPE html>
             const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
             const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
             const isMobile = (height > width && width < 600) || width < 520;
-            const isSmallScreen = height < 650;
+            const isSmallScreen = height < 680;
 
-            const topBarY = (height < 600) ? 26 : 34;
-            const questY = topBarY + (isSmallScreen ? 70 : 85);
+            const topBarY = (height < 600) ? 24 : 30;
+            const questY = topBarY + (isSmallScreen ? 55 : 68);
 
             if (this.state.tutorial.active && this.state.tutorial.step > 0) {
-                this.renderTutorialBanner(width, questY + 105);
+                this.renderTutorialBanner(width, questY + 95);
             }
 
-            const binH = isSmallScreen ? 85 : 100;
-            const binBaselineY = height - (isSmallScreen ? 32 : 44);
+            // HORIZON LINE (splitY): Elevated high into upper-middle of screen (~28% of height)
+            // Store, walking customers, and factory sit above this line (walkY = splitY - 20, blocks at splitY - 24)
+            const splitY = isSmallScreen ? Math.round(height * 0.27) : Math.round(height * 0.28);
+
+            // TOOLBAR: Sanitiser & Pet helper buttons positioned cleanly below the horizon
+            const toolbarY = splitY + (isSmallScreen ? 32 : 34);
+
+            // CONVEYOR QUEUE ROW: Center-aligned queue sitting directly below the toolbar
+            const queueY = toolbarY + (isSmallScreen ? 40 : 44);
+            this.queueY = queueY;
+
+            // BINS ROW: Prominently spaced beneath the conveyor
+            const binH = isSmallScreen ? 80 : 92;
+            const binBaselineY = queueY + (isSmallScreen ? 38 : 42) + binH;
             const binCenterY = binBaselineY - (binH / 2);
-            const queueY = binBaselineY - binH - (isSmallScreen ? 44 : 54);
-            const toolbarY = queueY - 36;
-            const splitY = Math.max(topBarY + 85, toolbarY - (isSmallScreen ? 35 : 45));
+
+            // STREAK & HIGHSCORE: Centered directly under the bins!
+            const streakY = binBaselineY + (isSmallScreen ? 22 : 24);
+            const streakX = Math.round(width / 2);
+
+            // GATE ROW: Sits with ample space below the streak/bins
+            const bottomY = streakY + (isSmallScreen ? 40 : 44);
+
+            // BUS ROAD LANE: Runs along the bottom in its own clear road
+            const busY = height - (isSmallScreen ? 38 : 42);
+            this.busY = busY;
 
             if (this.skyGfx) this.skyGfx.destroy();
             if (this.groundGfx) this.groundGfx.destroy();
@@ -1478,7 +1555,7 @@ const htmlContent = `<!DOCTYPE html>
             this.renderDecorationsGraphics(width, height, splitY);
 
             const activeBinCount = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length;
-            const binSpacing = Math.min(Math.floor((width - 30) / activeBinCount), isSmallScreen ? 70 : 88);
+            const binSpacing = Math.min(Math.floor((width - 30) / activeBinCount), isSmallScreen ? 74 : 88);
             const startBinX = Math.round((width - (binSpacing * (activeBinCount - 1))) / 2);
 
             this.renderCenteredXPBar(width, topBarY);
@@ -1488,19 +1565,22 @@ const htmlContent = `<!DOCTYPE html>
             // 1. WALKING MEADOW CUSTOMERS (Above dirt, up to 3 in line)
             this.renderMeadowShopLine(width, splitY);
 
-            // 3. QUEUE ROW
-            this.queueY = queueY;
-            const maxQueueW = width - (isMobile ? 44 : 64);
-            const queueGap = Math.min(isSmallScreen ? 44 : 50, Math.max(34, Math.floor(maxQueueW / 10)));
-            this.queueGap = queueGap;
-            this.itemDisplaySize = Math.min(48, queueGap);
-            const queueTotalSpan = 10 * queueGap;
-            this.queueStartX = Math.max(isMobile ? 16 : 24, Math.round((width - queueTotalSpan) / 2));
+            // 3. QUEUE ROW (Center aligned with equal padding on left and right sides)
+            const minPad = isMobile ? 12 : 20;
+            const baseGap = 56;
+            const availAssemblyW = width - (2 * minPad);
+            const availQueueSpan = Math.max(140, availAssemblyW - 84);
+            const actualQueueSpan = Math.min(9 * baseGap, availQueueSpan);
+            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? 44 : 34;
+            const totalQueueW = 28 + actualQueueSpan + overflowGap + 22;
+            const sidePadding = Math.max(minPad, Math.floor((width - totalQueueW) / 2));
+            this.queueStartX = sidePadding + 28;
+            this.queueActualSpan = actualQueueSpan;
+            this.queueOverflowGap = overflowGap;
 
-            const hs = this.itemDisplaySize + 6;
             this.queueHighlight = this.add.graphics().setDepth(15);
             this.queueHighlight.lineStyle(3, 0xffd700, 1);
-            this.queueHighlight.strokeRect(-hs / 2, -hs / 2, hs, hs);
+            this.queueHighlight.strokeRect(-28, -28, 56, 56);
             this.queueHighlight.setVisible(false);
 
             // Dedicated container for all visible conveyor items inside mainContainer
@@ -1508,7 +1588,7 @@ const htmlContent = `<!DOCTYPE html>
 
             // Dark grey overflow block to the right of the queue
             this.overflowBlockContainer = this.add.container(0, 0).setDepth(20).setVisible(false);
-            const obSize = Math.min(46, this.itemDisplaySize);
+            const obSize = 44;
             const overflowBg = this.add.graphics();
             overflowBg.fillStyle(0x1e293b, 0.95);
             overflowBg.fillRoundedRect(-obSize / 2, -obSize / 2, obSize, obSize, 8);
@@ -1602,7 +1682,7 @@ const htmlContent = `<!DOCTYPE html>
             // Auto-Sort Pause/Resume Toggle (placed to the right, aligning near overflow block)
             if (this.state.unlockedAutoSort) {
                 const autoSortLabel = this.state.autoSortPaused ? '▶️ Auto-Sort: OFF' : ('⏸️ Auto-Sort: ' + (this.state.autoSortDelay / 1000).toFixed(1) + 's');
-                const autoSortX = Math.min(width - 65, this.queueStartX + (10 * this.queueGap) + 55);
+                const autoSortX = Math.min(width - 65, this.getQueueSlotX(9) + 55);
                 const btnAutoSort = this.add.text(autoSortX, toolbarY + (btnSize / 2), autoSortLabel, {
                     fontSize: '10px', style: 'bold',
                     backgroundColor: this.state.autoSortPaused ? '#374151' : '#1e3a8a',
@@ -1672,16 +1752,16 @@ const htmlContent = `<!DOCTYPE html>
                 this.mainContainer.add([sprite, label, countText, binHighlightGfx]);
             });
 
-            // Streak Score Text & Streak Bar Setup
-            this.dumpsterStreakText = this.add.text(Math.round(width / 2), binBaselineY + 22, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
+            // Streak Score Text & Streak Bar Setup (Centered directly under the bins!)
+            this.dumpsterStreakText = this.add.text(streakX, streakY, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
                 fontSize: '11px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 3 }
             }).setOrigin(0.5).setDepth(15);
             this.dumpsterBarGfx = this.add.graphics().setDepth(15);
             this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
-            // 5. GATE (Direct Intake onto Conveyor Belt)
-            const gateX = isMobile ? Math.max(36, this.queueStartX - 15) : Math.round(width * 0.16);
-            this.gatePos = { x: gateX, y: binBaselineY - 10 };
+            // 5. GATE (Direct Intake onto Conveyor Belt, positioned with ample room to the left for queueing customers)
+            const gateX = isMobile ? Math.max(160, Math.round(width * 0.35)) : Math.max(220, Math.round(width * 0.28));
+            this.gatePos = { x: gateX, y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
             this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - 36, 'GATE [SPACE]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
@@ -2385,57 +2465,48 @@ const htmlContent = `<!DOCTYPE html>
 
             const spriteKey = fixedSpriteKey || typeData.sprites[Math.floor(Math.random() * typeData.sprites.length)];
             const multiplier = forcedMultiplier;
-            const baseSz = this.itemDisplaySize || 46;
 
             if (multiplier === 4) {
                 // QUADRUPLE: Pile of 4 identical PNG icons
-                const off = Math.round(baseSz * 0.22);
-                const iconSz = Math.round(baseSz * 0.52);
-                const bgR = Math.round(baseSz * 0.26);
-                const offsets = [ {x: -off, y: -off}, {x: off, y: -off}, {x: -off, y: off}, {x: off, y: off} ];
+                const offsets = [ {x: -12, y: -12}, {x: 12, y: -12}, {x: -12, y: 12}, {x: 12, y: 12} ];
                 offsets.forEach(pos => {
                     if (isBgUnlocked) {
                         const circleGfx = this.add.graphics();
                         circleGfx.fillStyle(typeData.color, 1);
-                        circleGfx.fillCircle(pos.x, pos.y, bgR);
+                        circleGfx.fillCircle(pos.x, pos.y, 14);
                         circleGfx.lineStyle(2, 0x000000, 1);
-                        circleGfx.strokeCircle(pos.x, pos.y, bgR);
+                        circleGfx.strokeCircle(pos.x, pos.y, 14);
                         container.add(circleGfx);
                     }
-                    const img = this.add.image(pos.x, pos.y, spriteKey).setDisplaySize(iconSz, iconSz);
+                    const img = this.add.image(pos.x, pos.y, spriteKey).setDisplaySize(30, 30);
                     container.add(img);
                 });
             } else if (multiplier === 2) {
                 // DOUBLE: 2 identical PNG icons (top-right & bottom-left)
-                const off = Math.round(baseSz * 0.16);
-                const iconSz = Math.round(baseSz * 0.72);
-                const bgR = Math.round(baseSz * 0.36);
-                const offsets = [ {x: off, y: -off, sz: iconSz}, {x: -off, y: off, sz: iconSz} ];
+                const offsets = [ {x: 8, y: -8, sz: 40}, {x: -6, y: 6, sz: 44} ];
                 offsets.forEach(pos => {
                     if (isBgUnlocked) {
                         const circleGfx = this.add.graphics();
                         circleGfx.fillStyle(typeData.color, 1);
-                        circleGfx.fillCircle(pos.x, pos.y, bgR);
+                        circleGfx.fillCircle(pos.x, pos.y, 20);
                         circleGfx.lineStyle(2.5, 0x000000, 1);
-                        circleGfx.strokeCircle(pos.x, pos.y, bgR);
+                        circleGfx.strokeCircle(pos.x, pos.y, 20);
                         container.add(circleGfx);
                     }
                     const img = this.add.image(pos.x, pos.y, spriteKey).setDisplaySize(pos.sz, pos.sz);
                     container.add(img);
                 });
             } else {
-                // SINGLE: 1 icon centered
-                const iconSz = Math.round(baseSz * 0.88);
-                const bgR = Math.round(baseSz * 0.44);
+                // SINGLE: 1 icon centered at full original 52x52 size
                 if (isBgUnlocked) {
                     const circleGfx = this.add.graphics();
                     circleGfx.fillStyle(typeData.color, 1);
-                    circleGfx.fillCircle(0, 0, bgR);
-                    circleGfx.lineStyle(2.5, 0x000000, 1);
-                    circleGfx.strokeCircle(0, 0, bgR);
+                    circleGfx.fillCircle(0, 0, 26);
+                    circleGfx.lineStyle(3, 0x000000, 1);
+                    circleGfx.strokeCircle(0, 0, 26);
                     container.add(circleGfx);
                 }
-                const img = this.add.image(0, 0, spriteKey).setDisplaySize(iconSz, iconSz);
+                const img = this.add.image(0, 0, spriteKey).setDisplaySize(52, 52);
                 container.add(img);
             }
 
@@ -2476,16 +2547,49 @@ const htmlContent = `<!DOCTYPE html>
             this.updateUI();
         }
 
+        getQueueSlotX(idx) {
+            const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
+            const isMobile = (this.scale && this.scale.height > width && width < 600) || width < 520;
+            const minPad = isMobile ? 12 : 20;
+            const baseGap = 56;
+            const weights = [1.0, 0.95, 0.85, 0.75, 0.65, 0.55, 0.45, 0.35, 0.25];
+            const totalWeight = 5.8;
+
+            const availAssemblyW = width - (2 * minPad);
+            const availQueueSpan = Math.max(140, availAssemblyW - 84);
+            const actualQueueSpan = Math.min(9 * baseGap, availQueueSpan);
+            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? 44 : 34;
+            const totalQueueW = 28 + actualQueueSpan + overflowGap + 22;
+            const sidePadding = Math.max(minPad, Math.floor((width - totalQueueW) / 2));
+            const qStartX = sidePadding + 28;
+
+            if (idx === 0) return qStartX;
+            if (actualQueueSpan >= 9 * baseGap) {
+                return qStartX + (idx * baseGap);
+            }
+            let x = qStartX;
+            for (let i = 0; i < idx; i++) {
+                x += (weights[i] / totalWeight) * actualQueueSpan;
+            }
+            return Math.round(x);
+        }
+
         renderHorizontalQueue() {
-            const gap = this.queueGap || 50;
-            const qStartX = this.queueStartX;
+            if (!this.conveyorContainer) return;
+
+            const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
+            const isMobile = (this.scale && this.scale.height > width && width < 600) || width < 520;
+            const qStartX = this.getQueueSlotX(0);
             const qY = this.queueY;
-            const itemSz = this.itemDisplaySize || 50;
+
+            this.fillQueueFromExcess();
 
             const excess = this.state.excessTrashCount || 0;
             if (this.overflowBlockContainer) {
                 if (excess > 0) {
-                    const overflowX = qStartX + (10 * gap);
+                    const actualQueueSpan = this.queueActualSpan || Math.min(9 * 56, (width - (isMobile ? 24 : 40) - 84));
+                    const overflowGap = (actualQueueSpan >= 9 * 56) ? 44 : 34;
+                    const overflowX = this.getQueueSlotX(9) + overflowGap;
                     this.overflowBlockContainer.setPosition(overflowX, qY);
                     this.overflowNumText.setText('+' + excess);
                     this.overflowBlockContainer.setVisible(true);
@@ -2505,13 +2609,16 @@ const htmlContent = `<!DOCTYPE html>
 
             this.trashQueue.forEach((item, index) => {
                 if (index < 10) {
-                    const targetX = qStartX + (index * gap);
+                    const targetX = this.getQueueSlotX(index);
                     if (!item.container || !item.container.scene) {
                         const fixedKey = item.spriteKey || (item.container && item.container.spriteKey);
                         item.spriteKey = fixedKey;
                         item.container = this.createItemGraphic(item.type, null, item.multiplier || 1, fixedKey);
                         item.container.setPosition(targetX, qY);
                     }
+
+                    // Stack depth: earlier items sit on top of later bunched items
+                    item.container.setDepth(20 - index);
 
                     let itemAlpha = 1;
                     if (index >= 6) itemAlpha = Math.max(0.2, 1 - ((index - 5) * 0.2));
@@ -2532,14 +2639,13 @@ const htmlContent = `<!DOCTYPE html>
                     }
 
                     if (index === 0) {
-                        const hs = itemSz + 6;
                         this.queueHighlight.clear();
                         this.queueHighlight.lineStyle(3, 0xffd700, 1);
-                        this.queueHighlight.strokeRect(-hs / 2, -hs / 2, hs, hs);
+                        this.queueHighlight.strokeRect(-28, -28, 56, 56);
                         this.queueHighlight.setVisible(true);
                         this.queueHighlight.setPosition(targetX, qY);
 
-                        item.container.setSize(itemSz, itemSz);
+                        item.container.setSize(52, 52);
                         item.container.setInteractive({ draggable: true });
                         this.input.setDraggable(item.container);
 
@@ -2789,6 +2895,7 @@ const htmlContent = `<!DOCTYPE html>
 
             if (type === 'upgrades') this.renderTopHalfUpgradesModal(w, modalH, boxW);
             if (type === 'decorations') this.renderDecorationsModal(w, modalH, boxW);
+            if (type === 'factory') this.renderFactoryModal(w, modalH, boxW);
         }
 
         getUpgradeListForCategory(catKey) {
@@ -2819,12 +2926,7 @@ const htmlContent = `<!DOCTYPE html>
                         action: () => {
                             this.state.money -= this.state.upgrades.footTraffic.cost;
                             this.state.customerSpawnChance = Math.min(1.0, this.state.customerSpawnChance + 0.10);
-                            if (this.state.customerSpawnChance >= 0.70) {
-                                this.state.spawnDelay = Math.max(1200, this.state.spawnDelay - 200);
-                            }
-                            if (this.spawnerEvent) {
-                                this.spawnerEvent.delay = this.state.spawnDelay;
-                            }
+                            this.state.spawnDelay = Math.max(500, (this.state.spawnDelay || 1000) - 100);
                             this.state.upgrades.footTraffic.lvl++;
                             this.state.upgrades.footTraffic.cost *= 2;
                         }
@@ -3296,7 +3398,7 @@ const htmlContent = `<!DOCTYPE html>
 
                 if (!isLevelMet) {
                     const nameTxt = this.add.text(startX, uy + 6, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
-                    const lockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, `[ Requires Level ${uItem.reqLvl} ]`, {
+                    const lockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, '[ Requires Level ' + uItem.reqLvl + ' ]', {
                         fontSize: '10.5px', style: 'bold', color: '#ff9800'
                     }).setOrigin(1, 0);
 
@@ -3510,6 +3612,212 @@ const htmlContent = `<!DOCTYPE html>
                     this.modalContainer.add([infoTxt, btn]);
                 }
             });
+        }
+
+        renderFactoryModal(w, modalH, boxW) {
+            const boxLeft = (w - boxW) / 2;
+            const title = this.add.text(boxLeft + 15, 18, '🏭 RECYCLING FACTORY & WORKSHOP', { fontSize: '13px', style: 'bold', color: '#38bdf8' });
+            const r = this.state.resources;
+            const walletTxt = this.add.text(boxLeft + boxW - 140, 18, '$' + this.state.money + ' | 🟢' + r.organic + ' 🔵' + r.paper, { fontSize: '10.5px', style: 'bold', color: '#00e676' });
+            this.modalContainer.add([title, walletTxt]);
+
+            if (!this.state.factoryUnlocked) {
+                // Factory Purchase Screen
+                const centerBoxY = Math.round(modalH * 0.46);
+                const desc = this.add.text(w / 2, centerBoxY - 25, 'Industrial Manufacturing Facility\\nConvert sorted rubbish tokens into high-value craft goods to fulfill customer trade orders!', {
+                    fontSize: '11px', color: '#ffffff', align: 'center', lineSpacing: 4
+                }).setOrigin(0.5);
+
+                const canAffordFactory = (this.state.money >= 25);
+                const btnBuyFactory = this.add.text(w / 2, centerBoxY + 35, '🏭 UNLOCK FACTORY ($25)', {
+                    fontSize: '13px', style: 'bold',
+                    backgroundColor: canAffordFactory ? '#00e676' : '#424242',
+                    color: canAffordFactory ? '#000000' : '#aaaaaa', padding: { x: 16, y: 8 }
+                }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+
+                btnBuyFactory.on('pointerup', () => {
+                    if (this.state.money >= 25) {
+                        this.state.money -= 25;
+                        this.state.factoryUnlocked = true;
+                        this.state.unlockedWorkshopsFacility = true;
+                        this.updateUI();
+                        this.requestLayoutRebuild();
+                        this.openModal('factory', 'factory', true);
+                    }
+                });
+
+                this.modalContainer.add([desc, btnBuyFactory]);
+                return;
+            }
+
+            // Viewport for 3-across Crafting Catalog
+            const viewX = boxLeft + 12;
+            const viewY = 42;
+            const viewW = boxW - 24;
+            const viewBottomY = modalH - 36;
+            const viewH = Math.max(10, viewBottomY - viewY);
+
+            this.upgradeListContainer = this.add.container(0, 0);
+            this.modalContainer.add(this.upgradeListContainer);
+
+            this.modalMaskGfx = this.make.graphics();
+            this.modalMaskGfx.fillStyle(0xffffff, 1);
+            this.modalMaskGfx.fillRect(viewX, viewY, viewW, viewH);
+            const mask = this.modalMaskGfx.createGeometryMask();
+            this.upgradeListContainer.setMask(mask);
+
+            const recipes = [
+                { name: '🌱 Fertilizer', key: 'fertilizer', req: '5 🟢', costVal: 5, resKey: 'organic', binId: 'organic', tier: 1 },
+                { name: '🛢️ Biofuel', key: 'biofuel', req: '10 🟢', costVal: 10, resKey: 'organic', binId: 'organic', tier: 2 },
+                { name: '🍂 Compost', key: 'compost', req: '15 🟢', costVal: 15, resKey: 'organic', binId: 'organic', tier: 3 },
+                { name: '📄 Rec.Paper', key: 'recycled_paper', req: '5 🔵', costVal: 5, resKey: 'paper', binId: 'paper', tier: 1 },
+                { name: '📦 Cardboard', key: 'cardboard', req: '10 🔵', costVal: 10, resKey: 'paper', binId: 'paper', tier: 2 },
+                { name: '📓 Notebook', key: 'notebook', req: '15 🔵', costVal: 15, resKey: 'paper', binId: 'paper', tier: 3 },
+                { name: '🏺 Glass Vase', key: 'glass_vase', req: '5 🟣', costVal: 5, resKey: 'glass', binId: 'glass', tier: 1 },
+                { name: '🪞 Mirror', key: 'mirror', req: '10 🟣', costVal: 10, resKey: 'glass', binId: 'glass', tier: 2 },
+                { name: '🔍 Lens', key: 'lens', req: '15 🟣', costVal: 15, resKey: 'glass', binId: 'glass', tier: 3 },
+                { name: '🧵 Filament', key: 'filament', req: '5 🟡', costVal: 5, resKey: 'plastic', binId: 'plastic', tier: 1 },
+                { name: '🧱 Brick', key: 'plastic_brick', req: '10 🟡', costVal: 10, resKey: 'plastic', binId: 'plastic', tier: 2 },
+                { name: '🧪 Pipe', key: 'pipe', req: '15 🟡', costVal: 15, resKey: 'plastic', binId: 'plastic', tier: 3 }
+            ];
+
+            const cols = 3;
+            const colGap = 8;
+            const rowGap = 8;
+            const cardW = Math.floor((viewW - ((cols - 1) * colGap) - 10) / cols);
+            const cardH = 68;
+            let totalDragDistance = 0;
+
+            recipes.forEach((rec, idx) => {
+                const col = idx % cols;
+                const row = Math.floor(idx / cols);
+                const cx = viewX + (col * (cardW + colGap));
+                const cy = viewY + (row * (cardH + rowGap));
+
+                const bUp = this.state.binUpgrades[rec.binId] || { shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false };
+                const isUnlocked = (rec.tier === 1 ? bUp.shopUnlocked : (rec.tier === 2 ? bUp.tier2Unlocked : bUp.tier3Unlocked));
+                const canAfford = isUnlocked && ((this.state.resources[rec.resKey] || 0) >= rec.costVal);
+                const owned = (this.state.crafted && this.state.crafted[rec.key]) || 0;
+
+                const cardBg = this.add.graphics();
+                cardBg.fillStyle(isUnlocked ? 0x1e293b : 0x0f172a, 0.95);
+                cardBg.fillRoundedRect(cx, cy, cardW, cardH, 6);
+                cardBg.lineStyle(1.5, isUnlocked ? (canAfford ? 0x38bdf8 : 0x475569) : 0x334155, 1);
+                cardBg.strokeRoundedRect(cx, cy, cardW, cardH, 6);
+
+                const nameTxt = this.add.text(cx + 6, cy + 5, rec.name, {
+                    fontSize: '10px', style: 'bold', color: isUnlocked ? '#ffffff' : '#64748b'
+                });
+
+                const costTxt = this.add.text(cx + 6, cy + 22, isUnlocked ? ('Cost: ' + rec.req) : '[ Locked in Bins ]', {
+                    fontSize: '9px', color: isUnlocked ? '#cbd5e1' : '#f59e0b'
+                });
+
+                const ownedTxt = this.add.text(cx + 6, cy + 38, 'Have: ' + owned, {
+                    fontSize: '9px', style: 'bold', color: '#38bdf8'
+                });
+
+                this.upgradeListContainer.add([cardBg, nameTxt, costTxt, ownedTxt]);
+
+                if (isUnlocked) {
+                    const btnCraft = this.add.text(cx + cardW - 6, cy + cardH - 8, 'CRAFT', {
+                        fontSize: '9.5px', style: 'bold',
+                        backgroundColor: canAfford ? '#00e676' : '#475569',
+                        color: canAfford ? '#000000' : '#94a3b8', padding: { x: 6, y: 3 }
+                    }).setOrigin(1, 1).setInteractive({ useHandCursor: true });
+
+                    btnCraft.on('pointerup', (pointer) => {
+                        if (totalDragDistance > 8) return;
+                        if (pointer.y < viewY || pointer.y > viewBottomY) return;
+                        if (canAfford) {
+                            this.state.resources[rec.resKey] -= rec.costVal;
+                            this.craftingConveyor.push({ shopId: rec.resKey, recipeKey: rec.key, recipeName: rec.name });
+                            this.processCraftingConveyor();
+                            this.updateUI();
+                            this.openModal('factory', 'factory', true);
+                        }
+                    });
+                    this.upgradeListContainer.add(btnCraft);
+                }
+            });
+
+            const totalRows = Math.ceil(recipes.length / cols);
+            const totalContentH = (totalRows * (cardH + rowGap)) + 10;
+            const maxScroll = Math.max(0, totalContentH - viewH);
+
+            this.upgradeScrollY = Phaser.Math.Clamp(this.upgradeScrollY || 0, -maxScroll, 0);
+            this.upgradeListContainer.y = this.upgradeScrollY;
+
+            let updateScrollThumb = () => {};
+            if (maxScroll > 0) {
+                const trackX = boxLeft + boxW - 12;
+                const trackY = viewY + 2;
+                const trackW = 4;
+                const trackH = viewH - 4;
+
+                const trackGfx = this.add.graphics();
+                trackGfx.fillStyle(0x222222, 0.7);
+                trackGfx.fillRoundedRect(trackX, trackY, trackW, trackH, 2);
+                this.modalContainer.add(trackGfx);
+
+                const thumbGfx = this.add.graphics();
+                const thumbH = Math.max(20, (viewH / totalContentH) * trackH);
+                this.modalContainer.add(thumbGfx);
+
+                updateScrollThumb = () => {
+                    thumbGfx.clear();
+                    const ratio = maxScroll > 0 ? (-this.upgradeScrollY / maxScroll) : 0;
+                    const thumbY = trackY + ratio * (trackH - thumbH);
+                    thumbGfx.fillStyle(0x38bdf8, 0.9);
+                    thumbGfx.fillRoundedRect(trackX, thumbY, trackW, thumbH, 2);
+                };
+                updateScrollThumb();
+            }
+
+            let isDraggingList = false;
+            let dragStartY = 0;
+            let dragStartScroll = 0;
+
+            this.modalWheelHandler = (pointer, gameObjects, deltaX, deltaY) => {
+                if (maxScroll <= 0) return;
+                if (pointer.x >= viewX && pointer.x <= viewX + viewW &&
+                    pointer.y >= viewY && pointer.y <= viewBottomY) {
+                    this.upgradeScrollY = Phaser.Math.Clamp(this.upgradeScrollY - deltaY * 0.6, -maxScroll, 0);
+                    this.upgradeListContainer.y = this.upgradeScrollY;
+                    updateScrollThumb();
+                }
+            };
+            this.input.on('wheel', this.modalWheelHandler);
+
+            this.modalPointerDownHandler = (pointer) => {
+                if (maxScroll <= 0) return;
+                if (pointer.x >= viewX && pointer.x <= viewX + viewW &&
+                    pointer.y >= viewY && pointer.y <= viewBottomY) {
+                    isDraggingList = true;
+                    dragStartY = pointer.y;
+                    dragStartScroll = this.upgradeScrollY;
+                    totalDragDistance = 0;
+                }
+            };
+
+            this.modalPointerMoveHandler = (pointer) => {
+                if (!isDraggingList) return;
+                const dy = pointer.y - dragStartY;
+                if (pointer.prevPosition) {
+                    totalDragDistance += Math.abs(pointer.position.y - pointer.prevPosition.y);
+                }
+                this.upgradeScrollY = Phaser.Math.Clamp(dragStartScroll + dy, -maxScroll, 0);
+                this.upgradeListContainer.y = this.upgradeScrollY;
+                updateScrollThumb();
+            };
+
+            this.modalPointerUpHandler = () => {
+                isDraggingList = false;
+            };
+
+            this.input.on('pointerdown', this.modalPointerDownHandler);
+            this.input.on('pointermove', this.modalPointerMoveHandler);
+            this.input.on('pointerup', this.modalPointerUpHandler);
         }
 
         openArcadeModal() {
@@ -4000,6 +4308,11 @@ const htmlContent = `<!DOCTYPE html>
         type: Phaser.AUTO,
         parent: 'game-container',
         resolution: window.devicePixelRatio || 1,
+        autoFocus: false,
+        fps: {
+            target: 60,
+            forceSetTimeOut: true
+        },
         render: {
             antialias: true,
             roundPixels: true
