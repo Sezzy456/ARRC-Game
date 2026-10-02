@@ -158,9 +158,11 @@ const htmlContent = `<!DOCTYPE html>
                 streakHighScore: 0,
                 streakTimer: 0,
 
-                // Customer Arrival Settings
-                customerSpawnChance: 0.30,
-                spawnDelay: 1000,
+                // Customer Arrival Settings (Tuned so player can clear queue and feel cleaned up)
+                customerSpawnChance: 0.25,
+                spawnDelay: 2500,
+                excessTrashCount: 0,
+                factoryUnlocked: false,
 
                 // Automation Timers
                 isGateAuto: false,
@@ -207,7 +209,7 @@ const htmlContent = `<!DOCTYPE html>
                 // Upgrades Tracker
                 upgrades: {
                     gateFee: { lvl: 0, max: 10, cost: 2, reqLvl: 1 },
-                    footTraffic: { lvl: 0, max: 5, cost: 5, reqLvl: 2 },
+                    footTraffic: { lvl: 0, max: 7, cost: 5, reqLvl: 2 },
                     gateAuto: { lvl: 0, max: 8, cost: 10, reqLvl: 1 },
                     doubleTrash: { lvl: 0, max: 5, cost: 4, reqLvl: 2 },
                     busRush: { lvl: 0, max: 5, cost: 15, reqLvl: 4 },
@@ -215,7 +217,7 @@ const htmlContent = `<!DOCTYPE html>
                     queueCap: { lvl: 0, max: 0, cost: 0, reqLvl: 1 },
                     doubleToken: { lvl: 0, max: 6, cost: 8, reqLvl: 2 },
                     sanitiser: { lvl: 0, max: 1, cost: 5, reqLvl: 2 },
-                    autoSort: { lvl: 0, max: 1, cost: 10, reqLvl: 3 },
+                    autoSort: { lvl: 0, max: 8, cost: 20, reqLvl: 2 },
 
                     // Pets Upgrades
                     petDog: { lvl: 0, max: 1, cost: 12, reqLvl: 2 },
@@ -457,7 +459,7 @@ const htmlContent = `<!DOCTYPE html>
 
             this.buildLayout();
 
-            for (let i = 0; i < 3; i++) this.spawnCustomer();
+            for (let i = 0; i < 2; i++) this.spawnCustomer();
 
             // 1 Second Ticker
             this.time.addEvent({
@@ -475,6 +477,21 @@ const htmlContent = `<!DOCTYPE html>
 
             // Keyboard Shortcuts
             this.input.keyboard.on('keydown', (e) => {
+                if (this.arcadeState && this.arcadeState.active) {
+                    if (['1','2','3','4','5','6'].includes(e.key)) {
+                        const typeMap = { '1': 'organic', '2': 'paper', '3': 'glass', '4': 'plastic', '5': 'metal', '6': 'fabric' };
+                        const chosen = typeMap[e.key];
+                        if (chosen) this.sortArcadeTrash(chosen);
+                    } else if (e.code === 'Space') {
+                        if (this.arcadeState.queue && this.arcadeState.queue.length > 0) {
+                            this.sortArcadeTrash(this.arcadeState.queue[0].type);
+                        }
+                    } else if (e.code === 'Escape') {
+                        this.exitArcade();
+                    }
+                    return;
+                }
+
                 if (['1','2','3','4','5','6'].includes(e.key)) {
                     const typeMap = { '1': 'organic', '2': 'paper', '3': 'glass', '4': 'plastic', '5': 'metal', '6': 'fabric' };
                     const chosen = typeMap[e.key];
@@ -492,7 +509,7 @@ const htmlContent = `<!DOCTYPE html>
 
             // Customer Spawner Loop
             this.spawnerEvent = this.time.addEvent({
-                delay: 1000,
+                delay: (this.state.spawnDelay || 2500),
                 callback: () => {
                     if (Math.random() < this.state.customerSpawnChance) {
                         this.spawnCustomer();
@@ -525,16 +542,23 @@ const htmlContent = `<!DOCTYPE html>
             this.time.addEvent({
                 delay: 50,
                 callback: () => {
-                    const hasExcess = this.trashQueue.length > 10;
+                    const hasExcess = (this.state.excessTrashCount || 0) > 0;
                     const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && hasExcess;
                     if (canAutoSort) {
                         this.state.autoSortTimer += 50;
                         const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
                         this.drawAutoSortProgress(sortProgress);
                         if (sortProgress >= 1) {
-                            const lastIdx = this.trashQueue.length - 1;
-                            this.sortHeadTrash(this.trashQueue[lastIdx].type, lastIdx);
+                            this.state.excessTrashCount--;
+                            const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+                            const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+                            const mult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
+                            this.state.resources[typeKey] += mult;
+                            this.state.money += 1;
+                            this.addXP(mult);
                             this.state.autoSortTimer = 0;
+                            this.renderHorizontalQueue();
+                            this.updateUI();
                         }
                     } else {
                         this.drawAutoSortProgress(0);
@@ -571,7 +595,7 @@ const htmlContent = `<!DOCTYPE html>
             for (let i = 0; i < 4; i++) {
                 const cx = (w / 4) * i + Phaser.Math.Between(-30, 30);
                 const cy = Phaser.Math.Between(20, 85);
-                const cloud = this.add.graphics().setDepth(2);
+                const cloud = this.add.graphics().setDepth(1);
                 cloud.fillStyle(0xffffff, 0.60);
                 cloud.fillCircle(0, 0, 22);
                 cloud.fillCircle(18, -6, 18);
@@ -595,11 +619,6 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         update(time, delta) {
-            if (this.arcadeState && this.arcadeState.active) {
-                this.updateArcade(delta);
-                return;
-            }
-
             if (this.clouds && this.clouds.length > 0) {
                 const w = this.scale.width || 800;
                 this.clouds.forEach(c => {
@@ -624,23 +643,42 @@ const htmlContent = `<!DOCTYPE html>
                 this.updateSanitiserBtnUI();
             }
 
+            if (this.activeModal === 'upgrades') {
+                const curM = this.state.money;
+                const curSP = this.state.skillPoints || 0;
+                if (curM !== this.lastModalMoney || curSP !== this.lastModalSP) {
+                    this.lastModalMoney = curM;
+                    this.lastModalSP = curSP;
+                    if (this.modalWalletTxt) this.modalWalletTxt.setText('$' + curM + ' | ⭐' + curSP + ' SP');
+                    this.refreshUpgradeModalAffordances();
+                }
+            }
+
             if (this.arcadeState && this.arcadeState.active) {
                 this.updateArcade(delta);
             }
         }
 
         renderDumpsterFireBar() {
-            const isActive = (this.state && this.state.streak > 0 && this.state.streakTimer > 0);
+            const hasStreakLine = (this.state && this.state.streak >= 5 && this.state.streakTimer > 0);
+            const is2XActive = (this.state && this.state.streak >= 10 && this.state.streakTimer > 0);
 
             // Always update streak text (so high score is permanently visible!)
             if (this.dumpsterStreakText) {
-                this.dumpsterStreakText.setText('🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore);
-                this.dumpsterStreakText.setColor(isActive ? '#ffca28' : '#9ca3af');
+                let streakLabel = '🔥 STREAK: ' + this.state.streak;
+                if (is2XActive) {
+                    streakLabel = '🔥 2X STREAK: ' + this.state.streak + ' (2X BONUS!)';
+                }
+                this.dumpsterStreakText.setText(streakLabel + '  |  BEST: ' + this.state.streakHighScore);
+                this.dumpsterStreakText.setColor(is2XActive ? '#ff5722' : (hasStreakLine ? '#ffca28' : '#9ca3af'));
                 this.dumpsterStreakText.setVisible(true);
             }
 
             if (!this.dumpsterBarGfx || !this.dumpsterStreakText) return;
             this.dumpsterBarGfx.clear();
+
+            // The streak line is ONLY supposed to show if streak is 5 or more!
+            if (!hasStreakLine) return;
 
             // Center streak timer bar directly below the streak badge
             const barW = 160;
@@ -654,18 +692,16 @@ const htmlContent = `<!DOCTYPE html>
             this.dumpsterBarGfx.lineStyle(1, 0x475569, 0.8);
             this.dumpsterBarGfx.strokeRoundedRect(barX, barY, barW, barH, 3);
 
-            if (isActive) {
-                const ratio = Math.min(1, Math.max(0, this.state.streakTimer / 2000));
-                const currentWidth = Math.max(4, barW * ratio);
+            const ratio = Math.min(1, Math.max(0, this.state.streakTimer / 2000));
+            const currentWidth = Math.max(4, barW * ratio);
 
-                let colorHex = 0x22c55e;
-                if (this.state.streak >= 10) colorHex = 0xff3d00;
-                else if (ratio < 0.35) colorHex = 0xef4444;
-                else if (ratio < 0.65) colorHex = 0xf59e0b;
+            let colorHex = 0x22c55e;
+            if (this.state.streak >= 10) colorHex = 0xff3d00;
+            else if (ratio < 0.35) colorHex = 0xef4444;
+            else if (ratio < 0.65) colorHex = 0xf59e0b;
 
-                this.dumpsterBarGfx.fillStyle(colorHex, 1);
-                this.dumpsterBarGfx.fillRoundedRect(barX, barY, currentWidth, barH, 3);
-            }
+            this.dumpsterBarGfx.fillStyle(colorHex, 1);
+            this.dumpsterBarGfx.fillRoundedRect(barX, barY, currentWidth, barH, 3);
         }
 
         spawnCustomer() {
@@ -674,7 +710,8 @@ const htmlContent = `<!DOCTYPE html>
             const personSprite = this.add.sprite(0, 0, 'person');
             const bagSprite = this.add.sprite(0, 10, 'bag');
 
-            const customerContainer = this.add.container(-50, this.gatePos ? this.gatePos.y : 600, [personSprite, bagSprite]).setDepth(5);
+            const customerContainer = this.add.container(-50, this.gatePos ? this.gatePos.y : 600, [personSprite, bagSprite]).setDepth(15);
+            if (this.mainContainer) this.mainContainer.add(customerContainer);
             this.customerQueue.push(customerContainer);
             this.repositionCustomerQueue();
         }
@@ -701,7 +738,20 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         triggerGate() {
-            if (this.customerQueue.length === 0) return;
+            if (this.arcadeState && this.arcadeState.active) return;
+            if (this.customerQueue.length === 0) {
+                if (this.gatePos) {
+                    const cleanTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, '✨ ALL CLEAN! (No Queue)', {
+                        fontSize: '11px', style: 'bold', color: '#38bdf8', backgroundColor: '#0f172a', padding: 4
+                    }).setOrigin(0.5).setDepth(20);
+                    if (this.tweens && this.tweens.add) {
+                        this.tweens.add({ targets: cleanTxt, y: cleanTxt.y - 25, alpha: 0, duration: 750, onComplete: () => cleanTxt.destroy() });
+                    } else {
+                        cleanTxt.destroy();
+                    }
+                }
+                return;
+            }
 
             const cust = this.customerQueue.shift();
             
@@ -743,55 +793,83 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         addTrashToConveyor(forcedMult = null) {
-            const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
-            const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
-            const typeData = TRASH_TYPES[typeKey];
-            const itemName = typeData.items[Math.floor(Math.random() * typeData.items.length)];
+            if (this.trashQueue.length < 10) {
+                const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+                const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+                const typeData = TRASH_TYPES[typeKey];
+                const itemName = typeData.items[Math.floor(Math.random() * typeData.items.length)];
 
-            let startMult = forcedMult;
-            if (!startMult) {
-                startMult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
-            }
+                let startMult = forcedMult;
+                if (!startMult) {
+                    startMult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
+                }
 
-            const queueIndex = this.trashQueue.length;
-            let container = null;
-            if (queueIndex < 10) {
-                container = this.createItemGraphic(typeData.id, itemName, startMult);
+                const container = this.createItemGraphic(typeData.id, itemName, startMult);
                 container.setPosition(this.gatePos ? this.gatePos.x : 100, this.gatePos ? this.gatePos.y : 500);
-            }
 
-            this.trashQueue.push({
-                container: container,
-                type: typeData.id,
-                multiplier: startMult,
-                spriteKey: container ? container.spriteKey : null
-            });
+                this.trashQueue.push({
+                    container: container,
+                    type: typeData.id,
+                    multiplier: startMult,
+                    spriteKey: container ? container.spriteKey : null
+                });
+            } else {
+                // Excess items: raw count only! Sprite, type, and tokens are calculated ONLY when entering visible queue!
+                this.state.excessTrashCount = (this.state.excessTrashCount || 0) + 1;
+            }
 
             this.renderHorizontalQueue();
             this.updateUI();
         }
 
+        fillQueueFromExcess() {
+            while (this.trashQueue.length < 10 && (this.state.excessTrashCount || 0) > 0) {
+                this.state.excessTrashCount--;
+                const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
+                const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
+                const typeData = TRASH_TYPES[typeKey];
+                const itemName = typeData.items[Math.floor(Math.random() * typeData.items.length)];
+                const startMult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
+                const container = this.createItemGraphic(typeData.id, itemName, startMult);
+                const itemIdx = this.trashQueue.length;
+                const gap = this.queueGap || 50;
+                container.setPosition(this.queueStartX + (itemIdx * gap), this.queueY);
+
+                this.trashQueue.push({
+                    container: container,
+                    type: typeData.id,
+                    multiplier: startMult,
+                    spriteKey: container ? container.spriteKey : null
+                });
+            }
+        }
+
         updateSanitiserBtnUI() {
-            if (!this.sanitiserFillGfx || !this.sanitiserFillGfx.scene) return;
+            if (!this.sanitiserContainer || !this.sanitiserBgGfx || !this.sanitiserBgGfx.scene) return;
             const maxCd = this.state.sanitiserMaxCooldown || 2500;
             const cd = this.state.sanitiserCooldown || 0;
             const pct = Math.min(1, Math.max(0, 1 - (cd / maxCd)));
-            const btnW = 104;
-            const btnH = 26;
+            const btnSize = 30;
 
-            this.sanitiserFillGfx.clear();
-            if (pct > 0) {
-                // Vibrant green fill grows smoothly until full
-                this.sanitiserFillGfx.fillStyle(pct >= 1 ? 0x2e7d32 : 0x388e3c, 1);
-                this.sanitiserFillGfx.fillRoundedRect(0, 0, Math.max(4, Math.round(btnW * pct)), btnH, 5);
+            if (this.sanitiserFillGfx) {
+                this.sanitiserFillGfx.clear();
+                if (pct < 1) {
+                    this.sanitiserFillGfx.fillStyle(0x000000, 0.55);
+                    const cdH = Math.round(btnSize * (1 - pct));
+                    this.sanitiserFillGfx.fillRoundedRect(0, btnSize - cdH, btnSize, cdH, 6);
+                }
             }
 
-            if (this.btnSanitiserText) {
-                const headItem = this.trashQueue && this.trashQueue[0];
-                const currentMult = headItem ? (headItem.multiplier || 1) : 1;
-                const targetMult = (currentMult === 1) ? 2 : 4;
-                const label = (currentMult >= 4) ? '🧪 MAX (4x)' : ('🧪 Sanitise x' + targetMult);
-                this.btnSanitiserText.setText(label);
+            if (this.sanitiserBgGfx) {
+                this.sanitiserBgGfx.clear();
+                this.sanitiserBgGfx.fillStyle(0x1e293b, 0.95);
+                this.sanitiserBgGfx.fillRoundedRect(0, 0, btnSize, btnSize, 6);
+                if (pct >= 1) {
+                    this.sanitiserBgGfx.lineStyle(2, 0x00e676, 1);
+                } else {
+                    this.sanitiserBgGfx.lineStyle(1.5, 0x475569, 0.7);
+                }
+                this.sanitiserBgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
             }
         }
 
@@ -824,7 +902,7 @@ const htmlContent = `<!DOCTYPE html>
             if (this.trashQueue.length === 0) return;
             const matchingIndices = [];
             this.trashQueue.forEach((item, idx) => {
-                if (item.type === typeId) matchingIndices.push(idx);
+                if (idx < 10 && item.type === typeId) matchingIndices.push(idx);
             });
             if (matchingIndices.length === 0) return;
 
@@ -854,6 +932,7 @@ const htmlContent = `<!DOCTYPE html>
                 pop.destroy();
             }
 
+            this.fillQueueFromExcess();
             this.updateUI();
             this.renderHorizontalQueue();
         }
@@ -1033,12 +1112,12 @@ const htmlContent = `<!DOCTYPE html>
             const xp = (qty * 8) + 6;
 
             const icons = {
-                organic: '🍏',
-                paper: '📦',
-                glass: '🍾',
-                plastic: '🥤',
-                metal: '🥫',
-                fabric: '👕'
+                organic: '🟢',
+                paper: '🔵',
+                plastic: '🟡',
+                glass: '🟣',
+                metal: '⚪',
+                fabric: '🌸'
             };
 
             return {
@@ -1155,14 +1234,20 @@ const htmlContent = `<!DOCTYPE html>
             });
         }
 
+        getShopQueueSlotX(slotIndex) {
+            const width = this.scale.width || 800;
+            const pageCenter = Math.round(width / 2);
+            const storeX = Math.round(pageCenter - 65);
+            const slotSpacing = 68;
+            return Math.round((storeX - 48) - (slotIndex * slotSpacing));
+        }
+
         spawnShopCustomer(instant = false) {
             if (!this.shopCustomers) this.shopCustomers = [];
             if (this.shopCustomers.length >= 3) return;
 
             const slotIndex = this.shopCustomers.length;
-            const slotSpacing = 82;
-            const slot0X = 58;
-            const targetX = slot0X + (slotIndex * slotSpacing);
+            const targetX = this.getShopQueueSlotX(slotIndex);
             const walkY = (this.splitY || 240) - 20;
 
             const orderData = this.generateBuyerOrderData();
@@ -1174,7 +1259,11 @@ const htmlContent = `<!DOCTYPE html>
                 container: null
             };
 
-            const startX = instant ? targetX : -35;
+            const width = this.scale.width || 800;
+            const mobileWidth = Math.min(width, 480);
+            const mobileLeft = Math.round((width - mobileWidth) / 2);
+            const startX = instant ? targetX : Math.min(targetX - 70, mobileLeft - 35);
+
             this.createBuyerContainer(customer, slotIndex, walkY, startX);
             this.shopCustomers.push(customer);
 
@@ -1221,7 +1310,7 @@ const htmlContent = `<!DOCTYPE html>
             if (customer.container && this.tweens && this.tweens.add) {
                 this.tweens.add({
                     targets: customer.container,
-                    x: customer.container.x + 80,
+                    x: customer.container.x + 40,
                     alpha: 0,
                     duration: 350,
                     onComplete: () => {
@@ -1267,11 +1356,9 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         repositionShopCustomers() {
-            const slotSpacing = 82;
-            const slot0X = 58;
             this.shopCustomers.forEach((cust, index) => {
                 if (cust.leaving) return;
-                const targetX = slot0X + (index * slotSpacing);
+                const targetX = this.getShopQueueSlotX(index);
                 cust.targetSlot = index;
                 if (cust.container && cust.container.scene) {
                     if (this.tweens && this.tweens.add) {
@@ -1289,102 +1376,110 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         handleResize(gameSize) {
-            this.cameras.main.setViewport(0, 0, gameSize.width, gameSize.height);
-            this.requestLayoutRebuild();
+            if (this.cameras && this.cameras.main) {
+                this.cameras.main.setSize(gameSize.width, gameSize.height);
+                this.cameras.main.setViewport(0, 0, gameSize.width, gameSize.height);
+            }
+            this.layoutRebuildPending = false;
+            this.buildLayout();
         }
 
         buildLayout() {
             if (this.mainContainer) this.mainContainer.destroy(true);
-            this.mainContainer = this.add.container(0, 0);
+            this.mainContainer = this.add.container(0, 0).setDepth(10);
 
-            const width = this.scale.width || window.innerWidth || 800;
-            const height = this.scale.height || window.innerHeight || 600;
-            const isMobile = height > width && width < 600;
+            // Cleanly reset trash container references so they are rebuilt at exact new scale and positions
+            if (this.trashQueue) {
+                this.trashQueue.forEach(item => {
+                    if (item.container) {
+                        item.container.destroy();
+                        item.container = null;
+                    }
+                });
+            }
 
-            const targetMinHeight = isMobile ? 840 : 720;
-            const scaleFactor = Math.min(1, height / targetMinHeight);
-            const logicalHeight = Math.max(height, targetMinHeight);
+            const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
+            const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
+            const isMobile = (height > width && width < 600) || width < 520;
+            const isSmallScreen = height < 650;
 
-            const topBarY = isMobile ? 30 : 35;
-            const questY = topBarY + 85;
+            const topBarY = (height < 600) ? 26 : 34;
+            const questY = topBarY + (isSmallScreen ? 70 : 85);
 
             if (this.state.tutorial.active && this.state.tutorial.step > 0) {
                 this.renderTutorialBanner(width, questY + 105);
             }
 
-            const bottomY = isMobile ? logicalHeight - 190 : logicalHeight - 135;
-            const binBaselineY = bottomY - 34; // Exact bottom baseline anchor for bins
-            const binH = 105;
+            const binH = isSmallScreen ? 85 : 100;
+            const binBaselineY = height - (isSmallScreen ? 32 : 44);
             const binCenterY = binBaselineY - (binH / 2);
-            const queueY = binBaselineY - 170; // Raised by 40px so conveyor items never overlap bin titles!
+            const queueY = binBaselineY - binH - (isSmallScreen ? 44 : 54);
+            const toolbarY = queueY - 36;
+            const splitY = Math.max(topBarY + 85, toolbarY - (isSmallScreen ? 35 : 45));
 
-            const workshopHeaderY = questY + (this.state.tutorial.active ? 195 : 95);
-            const conveyorY = workshopHeaderY + 24;
-            const workshopY = conveyorY + 45;
+            if (this.skyGfx) this.skyGfx.destroy();
+            if (this.groundGfx) this.groundGfx.destroy();
 
-            // Environmental Sky & Ground Layer:
-            // The horizon line is fixed at a permanent, stable position relative to the ground elements (queueY - 85).
-            // It remains completely stationary when the tutorial ends and when workshops are unlocked!
-            const splitY = isMobile ? Math.round(logicalHeight * 0.44) : (queueY - 85);
-            const envGfx = this.add.graphics();
-            // Sky gradient
-            envGfx.fillStyle(0x64b5f6, 1);
-            envGfx.fillRect(0, 0, width, splitY);
-            envGfx.fillStyle(0x90caf9, 0.45);
-            envGfx.fillRect(0, splitY - 45, width, 45);
+            // Sky gradient at depth 0 (clouds at depth 1 drift above the sky)
+            this.skyGfx = this.add.graphics().setDepth(0);
+            this.skyGfx.fillStyle(0x64b5f6, 1);
+            this.skyGfx.fillRect(0, 0, width, splitY);
+            this.skyGfx.fillStyle(0x90caf9, 0.45);
+            this.skyGfx.fillRect(0, splitY - 45, width, 45);
 
-            // Ground: Starts as earthy dirt brown; transitions to natural meadow when grass decoration is bought!
+            if (this.clouds) {
+                this.clouds.forEach(c => c.setDepth(1));
+            }
+
+            // Ground: depth 2 (above clouds, below mainContainer depth 10)
+            this.groundGfx = this.add.graphics().setDepth(2);
             if (this.state.hasGrass) {
-                envGfx.fillStyle(0x3e7b42, 1); // Natural meadow green (soft, grounded, not neon)
-                envGfx.fillRect(0, splitY, width, logicalHeight - splitY);
-                envGfx.fillStyle(0x336936, 1); // Deep meadow rim
-                envGfx.fillRect(0, splitY, width, 14);
+                this.groundGfx.fillStyle(0x3e7b42, 1); // Natural meadow green
+                this.groundGfx.fillRect(0, splitY, width, height - splitY);
+                this.groundGfx.fillStyle(0x336936, 1); // Deep meadow rim
+                this.groundGfx.fillRect(0, splitY, width, 14);
 
-                // Grass variety: subtle tufts of softer green splattered across the lawn
-                envGfx.fillStyle(0x558b2f, 0.45);
+                // Grass variety tufts
+                this.groundGfx.fillStyle(0x558b2f, 0.45);
                 for (let gx = 18; gx < width - 18; gx += 42) {
                     const gy1 = splitY + 28 + ((gx * 7) % 65);
                     const gy2 = splitY + 110 + ((gx * 13) % 80);
-                    envGfx.fillRoundedRect(gx, gy1, 14, 5, 2);
-                    envGfx.fillRoundedRect(gx + 12, gy2, 18, 6, 3);
+                    this.groundGfx.fillRoundedRect(gx, gy1, 14, 5, 2);
+                    this.groundGfx.fillRoundedRect(gx + 12, gy2, 18, 6, 3);
                 }
 
-                // Cute tiny wildflower accents dotted across the lawn (white daisies, pastel pink, buttercups)
+                // Tiny wildflower accents
                 for (let fx = 32; fx < width - 32; fx += 58) {
                     const fy = splitY + 20 + ((fx * 17) % 130);
                     const flowerType = (fx % 3);
                     if (flowerType === 0) {
-                        // White daisy with tiny yellow center
-                        envGfx.fillStyle(0xffffff, 0.9);
-                        envGfx.fillCircle(fx, fy, 3);
-                        envGfx.fillStyle(0xffd54f, 1);
-                        envGfx.fillCircle(fx, fy, 1.2);
+                        this.groundGfx.fillStyle(0xffffff, 0.9);
+                        this.groundGfx.fillCircle(fx, fy, 3);
+                        this.groundGfx.fillStyle(0xffd54f, 1);
+                        this.groundGfx.fillCircle(fx, fy, 1.2);
                     } else if (flowerType === 1) {
-                        // Soft pastel pink blossom
-                        envGfx.fillStyle(0xf48fb1, 0.9);
-                        envGfx.fillCircle(fx, fy, 2.5);
-                        envGfx.fillStyle(0xffffff, 1);
-                        envGfx.fillCircle(fx, fy, 1);
+                        this.groundGfx.fillStyle(0xf48fb1, 0.9);
+                        this.groundGfx.fillCircle(fx, fy, 2.5);
+                        this.groundGfx.fillStyle(0xffffff, 1);
+                        this.groundGfx.fillCircle(fx, fy, 1);
                     } else {
-                        // Buttercup gold
-                        envGfx.fillStyle(0xffeb3b, 0.95);
-                        envGfx.fillCircle(fx, fy, 2.5);
+                        this.groundGfx.fillStyle(0xffeb3b, 0.95);
+                        this.groundGfx.fillCircle(fx, fy, 2.5);
                     }
                 }
             } else {
-                envGfx.fillStyle(0x5d4037, 1); // Rich soil brown
-                envGfx.fillRect(0, splitY, width, logicalHeight - splitY);
-                envGfx.fillStyle(0x4e342e, 1); // Dirt rim
-                envGfx.fillRect(0, splitY, width, 14);
+                this.groundGfx.fillStyle(0x5d4037, 1); // Rich soil brown
+                this.groundGfx.fillRect(0, splitY, width, height - splitY);
+                this.groundGfx.fillStyle(0x4e342e, 1); // Dirt rim
+                this.groundGfx.fillRect(0, splitY, width, 14);
             }
-            this.mainContainer.add(envGfx);
 
             // Render decorations AFTER the environment so they are never covered up!
-            this.renderDecorationsGraphics(width, logicalHeight, splitY);
+            this.renderDecorationsGraphics(width, height, splitY);
 
             const activeBinCount = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length;
-            const binSpacing = Math.min(width * (1 / (activeBinCount + 0.8)), 88);
-            const startBinX = (width - (binSpacing * (activeBinCount - 1))) / 2;
+            const binSpacing = Math.min(Math.floor((width - 30) / activeBinCount), isSmallScreen ? 70 : 88);
+            const startBinX = Math.round((width - (binSpacing * (activeBinCount - 1))) / 2);
 
             this.renderCenteredXPBar(width, topBarY);
             this.renderTopHUDBar(width, topBarY, isMobile);
@@ -1395,52 +1490,58 @@ const htmlContent = `<!DOCTYPE html>
 
             // 3. QUEUE ROW
             this.queueY = queueY;
-            this.queueStartX = startBinX;
+            const maxQueueW = width - (isMobile ? 44 : 64);
+            const queueGap = Math.min(isSmallScreen ? 44 : 50, Math.max(34, Math.floor(maxQueueW / 10)));
+            this.queueGap = queueGap;
+            this.itemDisplaySize = Math.min(48, queueGap);
+            const queueTotalSpan = 10 * queueGap;
+            this.queueStartX = Math.max(isMobile ? 16 : 24, Math.round((width - queueTotalSpan) / 2));
 
-            this.queueCounterText = this.add.text(width * 0.72, queueY, '0/10 visible', { fontSize: '13px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
-            
-            this.queueHighlight = this.add.graphics();
+            const hs = this.itemDisplaySize + 6;
+            this.queueHighlight = this.add.graphics().setDepth(15);
             this.queueHighlight.lineStyle(3, 0xffd700, 1);
-            this.queueHighlight.strokeRect(-28, -28, 56, 56);
+            this.queueHighlight.strokeRect(-hs / 2, -hs / 2, hs, hs);
             this.queueHighlight.setVisible(false);
 
-            this.mainContainer.add([this.queueCounterText, this.queueHighlight]);
+            // Dedicated container for all visible conveyor items inside mainContainer
+            this.conveyorContainer = this.add.container(0, 0).setDepth(12);
 
-            // Toolbar above conveyor: Sanitiser station, Pet helpers & Auto-Sort toggle
-            const toolbarY = queueY - 48;
+            // Dark grey overflow block to the right of the queue
+            this.overflowBlockContainer = this.add.container(0, 0).setDepth(20).setVisible(false);
+            const obSize = Math.min(46, this.itemDisplaySize);
+            const overflowBg = this.add.graphics();
+            overflowBg.fillStyle(0x1e293b, 0.95);
+            overflowBg.fillRoundedRect(-obSize / 2, -obSize / 2, obSize, obSize, 8);
+            overflowBg.lineStyle(2, 0x475569, 1);
+            overflowBg.strokeRoundedRect(-obSize / 2, -obSize / 2, obSize, obSize, 8);
+
+            this.overflowNumText = this.add.text(0, -6, '+0', {
+                fontSize: '15px', style: 'bold', color: '#38bdf8'
+            }).setOrigin(0.5);
+
+            const overflowLabel = this.add.text(0, 11, 'QUEUED', {
+                fontSize: '8px', style: 'bold', color: '#94a3b8'
+            }).setOrigin(0.5);
+
+            this.overflowBlockContainer.add([overflowBg, this.overflowNumText, overflowLabel]);
+            this.mainContainer.add([this.conveyorContainer, this.queueHighlight, this.overflowBlockContainer]);
+
+            // Toolbar above conveyor: Sanitiser station, Pet helpers (Center-aligned, matching compact 30x30 size!) & Auto-Sort toggle
+            const btnSize = 30;
+            const btnSpacing = 7;
+
+            // Collect active action buttons
+            const activeActionButtons = [];
 
             if (this.state.unlockedSanitiser) {
-                const sBoxW = 104;
-                const sBoxH = 26;
-                this.sanitiserContainer = this.add.container(startBinX - 20, toolbarY).setDepth(20);
-
-                this.sanitiserBgGfx = this.add.graphics();
-                this.sanitiserBgGfx.fillStyle(0x1e293b, 1);
-                this.sanitiserBgGfx.fillRoundedRect(0, 0, sBoxW, sBoxH, 5);
-                this.sanitiserBgGfx.lineStyle(1.5, 0x334155, 1);
-                this.sanitiserBgGfx.strokeRoundedRect(0, 0, sBoxW, sBoxH, 5);
-
-                this.sanitiserFillGfx = this.add.graphics();
-
-                const headItem = this.trashQueue && this.trashQueue[0];
-                const currentMult = headItem ? (headItem.multiplier || 1) : 1;
-                const targetMult = (currentMult === 1) ? 2 : 4;
-                const initLabel = (currentMult >= 4) ? '🧪 MAX (4x)' : ('🧪 Sanitise x' + targetMult);
-
-                this.btnSanitiserText = this.add.text(sBoxW / 2, sBoxH / 2, initLabel, {
-                    fontSize: '10.5px', style: 'bold', color: '#ffffff'
-                }).setOrigin(0.5);
-
-                this.sanitiserContainer.add([this.sanitiserBgGfx, this.sanitiserFillGfx, this.btnSanitiserText]);
-                this.sanitiserContainer.setSize(sBoxW, sBoxH);
-                this.sanitiserContainer.setInteractive(new Phaser.Geom.Rectangle(0, 0, sBoxW, sBoxH), Phaser.Geom.Rectangle.Contains);
-                this.sanitiserContainer.on('pointerup', () => this.triggerSanitiseAction());
-
-                this.mainContainer.add(this.sanitiserContainer);
-                this.updateSanitiserBtnUI();
+                activeActionButtons.push({
+                    id: 'sanitiser',
+                    type: 'sanitiser',
+                    icon: '🧼',
+                    action: () => this.triggerSanitiseAction()
+                });
             }
 
-            // Pet Helper Buttons
             const petDefs = [
                 { id: 'dog', name: 'Dog', icon: '🐶', targetType: 'paper', col: '#2196f3' },
                 { id: 'chicken', name: 'Chicken', icon: '🐔', targetType: 'organic', col: '#4caf50' },
@@ -1450,27 +1551,59 @@ const htmlContent = `<!DOCTYPE html>
                 { id: 'magnet', name: 'Magnet', icon: '🧲', targetType: 'metal', col: '#9e9e9e' }
             ];
 
-            const petStartX = this.state.unlockedSanitiser ? (startBinX + 96) : startBinX;
-            let petIdx = 0;
             petDefs.forEach(p => {
                 if (this.state.pets[p.id]) {
-                    const px = petStartX + (petIdx * 42);
-                    const btnPet = this.add.text(px, toolbarY + 13, p.icon, {
-                        fontSize: '15px', backgroundColor: '#1e293b', padding: { x: 6, y: 4 }
-                    }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
-
-                    btnPet.on('pointerup', () => {
-                        this.triggerPetClean(p.targetType, p.icon + ' ' + p.name);
+                    activeActionButtons.push({
+                        id: p.id,
+                        type: 'pet',
+                        icon: p.icon,
+                        targetType: p.targetType,
+                        name: p.name,
+                        action: () => this.triggerPetClean(p.targetType, p.icon + ' ' + p.name)
                     });
-                    this.mainContainer.add(btnPet);
-                    petIdx++;
                 }
             });
 
-            // Auto-Sort Pause/Resume Toggle
+            // Center align the entire cluster of queue action buttons!
+            const totalActionW = (activeActionButtons.length * btnSize) + Math.max(0, (activeActionButtons.length - 1) * btnSpacing);
+            const clusterStartX = Math.round((width - totalActionW) / 2);
+
+            activeActionButtons.forEach((act, idx) => {
+                const bx = clusterStartX + (idx * (btnSize + btnSpacing));
+                const btnContainer = this.add.container(bx, toolbarY).setDepth(20);
+
+                const bgGfx = this.add.graphics();
+                bgGfx.fillStyle(0x1e293b, 0.95);
+                bgGfx.fillRoundedRect(0, 0, btnSize, btnSize, 6);
+                bgGfx.lineStyle(1.5, 0x475569, 1);
+                bgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
+
+                const iconTxt = this.add.text(btnSize / 2, btnSize / 2, act.icon, {
+                    fontSize: '15px'
+                }).setOrigin(0.5);
+
+                btnContainer.add([bgGfx, iconTxt]);
+
+                if (act.type === 'sanitiser') {
+                    this.sanitiserContainer = btnContainer;
+                    this.sanitiserBgGfx = bgGfx;
+                    this.sanitiserFillGfx = this.add.graphics();
+                    btnContainer.add(this.sanitiserFillGfx);
+                    this.updateSanitiserBtnUI();
+                }
+
+                btnContainer.setSize(btnSize, btnSize);
+                btnContainer.setInteractive(new Phaser.Geom.Rectangle(0, 0, btnSize, btnSize), Phaser.Geom.Rectangle.Contains);
+                btnContainer.on('pointerup', () => act.action());
+
+                this.mainContainer.add(btnContainer);
+            });
+
+            // Auto-Sort Pause/Resume Toggle (placed to the right, aligning near overflow block)
             if (this.state.unlockedAutoSort) {
-                const autoSortLabel = this.state.autoSortPaused ? '▶️ Auto-Sort: OFF' : '⏸️ Auto-Sort: ON';
-                const btnAutoSort = this.add.text(width * 0.88, toolbarY + 13, autoSortLabel, {
+                const autoSortLabel = this.state.autoSortPaused ? '▶️ Auto-Sort: OFF' : ('⏸️ Auto-Sort: ' + (this.state.autoSortDelay / 1000).toFixed(1) + 's');
+                const autoSortX = Math.min(width - 65, this.queueStartX + (10 * this.queueGap) + 55);
+                const btnAutoSort = this.add.text(autoSortX, toolbarY + (btnSize / 2), autoSortLabel, {
                     fontSize: '10px', style: 'bold',
                     backgroundColor: this.state.autoSortPaused ? '#374151' : '#1e3a8a',
                     color: '#ffffff', padding: { x: 7, y: 4 }
@@ -1498,6 +1631,7 @@ const htmlContent = `<!DOCTYPE html>
                 binData.push({ id: 'fabric', key: '6', name: 'FABRIC', sprite: 'bin_fabric', count: this.state.resources.fabric });
             }
 
+            const binSpriteScale = isSmallScreen ? (BIN_SPRITE_CONFIG.scale * 0.85) : BIN_SPRITE_CONFIG.scale;
             binData.forEach((b, idx) => {
                 const bx = Math.round(startBinX + (idx * binSpacing));
                 const isSheet = !!(b.sheetKey && this.textures.exists(b.sheetKey));
@@ -1505,25 +1639,25 @@ const htmlContent = `<!DOCTYPE html>
                 if (isSheet) {
                     sprite = this.add.sprite(bx, binBaselineY, b.sheetKey, 0)
                         .setOrigin(0.5, 1)
-                        .setScale(BIN_SPRITE_CONFIG.scale)
+                        .setScale(binSpriteScale)
                         .setInteractive({ useHandCursor: true });
                 } else {
                     sprite = this.add.sprite(bx, binBaselineY, b.sprite)
                         .setOrigin(0.5, 1)
-                        .setDisplaySize(78, binH)
+                        .setDisplaySize(isSmallScreen ? 68 : 78, binH)
                         .setInteractive({ useHandCursor: true });
                 }
 
                 const labelY = binBaselineY - binH - 12;
                 const label = this.add.text(bx, labelY, '[' + b.key + '] ' + b.name, { fontSize: '11px', color: '#fff', style: 'bold' }).setOrigin(0.5);
-                const countY = binBaselineY - 45;
+                const countY = binBaselineY - (binH * 0.42);
                 const countText = this.add.text(bx, countY, '' + b.count, {
-                    fontSize: '16px', color: '#ffffff', stroke: '#000000', strokeThickness: 4, style: 'bold'
+                    fontSize: '15px', color: '#ffffff', stroke: '#000000', strokeThickness: 4, style: 'bold'
                 }).setOrigin(0.5).setDepth(2);
 
                 const binHighlightGfx = this.add.graphics();
                 binHighlightGfx.lineStyle(3, 0xffd700, 1);
-                binHighlightGfx.strokeRoundedRect(bx - 42, binBaselineY - binH - 4, 84, binH + 8, 8);
+                binHighlightGfx.strokeRoundedRect(bx - 38, binBaselineY - binH - 4, 76, binH + 8, 8);
                 binHighlightGfx.setVisible(false);
 
                 sprite.on('pointerdown', () => this.sortHeadTrash(b.id, 0));
@@ -1531,7 +1665,7 @@ const htmlContent = `<!DOCTYPE html>
                     sprite.on('animationcomplete', () => {
                         sprite.setFrame(0);
                         sprite.setOrigin(0.5, 1);
-                        sprite.setScale(BIN_SPRITE_CONFIG.scale);
+                        sprite.setScale(binSpriteScale);
                     });
                 }
                 this.bins.push({ sprite, id: b.id, x: bx, y: binCenterY, baselineY: binBaselineY, countText, highlightGfx: binHighlightGfx, sheetKey: b.sheetKey, animKey: b.animKey });
@@ -1539,18 +1673,18 @@ const htmlContent = `<!DOCTYPE html>
             });
 
             // Streak Score Text & Streak Bar Setup
-            // Permanent Responsive Streak & High Score Badge
-            this.dumpsterStreakText = this.add.text(Math.round(width * 0.58), binBaselineY + 28, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
-                fontSize: '12px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 4 }
+            this.dumpsterStreakText = this.add.text(Math.round(width / 2), binBaselineY + 22, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
+                fontSize: '11px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 3 }
             }).setOrigin(0.5).setDepth(15);
             this.dumpsterBarGfx = this.add.graphics().setDepth(15);
             this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
-            // 5. GATE (Direct Intake onto Conveyor Belt, placed at bottom-left to avoid streak overlap)
-            this.gatePos = { x: Math.round(width * 0.22), y: bottomY };
+            // 5. GATE (Direct Intake onto Conveyor Belt)
+            const gateX = isMobile ? Math.max(36, this.queueStartX - 15) : Math.round(width * 0.16);
+            this.gatePos = { x: gateX, y: binBaselineY - 10 };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
-            this.gateText = this.add.text(this.gatePos.x, bottomY - 40, 'GATE [SPACE]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - 36, 'GATE [SPACE]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
 
             this.autoGateGfx = this.add.graphics();
             this.autoSortGfx = this.add.graphics().setDepth(25);
@@ -1564,9 +1698,9 @@ const htmlContent = `<!DOCTYPE html>
                 this.longPressGfx, this.tutorialIndicatorsGfx
             ]);
 
-            if (scaleFactor < 1) {
-                this.mainContainer.setScale(scaleFactor);
-                this.mainContainer.x = (width - (width * scaleFactor)) / 2;
+            if (!this.customerQueue || this.customerQueue.length === 0) {
+                this.customerQueue = [];
+                for (let i = 0; i < 2; i++) this.spawnCustomer();
             }
 
             this.updateUI();
@@ -1675,87 +1809,87 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         renderDecorationsGraphics(w, h, splitY) {
-            // 1. Festive Bunting: Colorful triangular pennants strung high across top of screen (clear of XP bar!)
+            if (this.decorationsGfx) this.decorationsGfx.destroy();
+            this.decorationsGfx = this.add.graphics().setDepth(3);
+
+            // 1. Festive Bunting: Colorful triangular pennants strung across top of screen (clear of XP bar, reaches edges 0 to w!)
             if (this.state.hasBunting) {
-                const gfx = this.add.graphics();
                 const colors = [0x2196f3, 0xff1744, 0xffeb3b, 0x4caf50];
                 let cIdx = 0;
-                const ropeY = 8; // Raised well above XP bar (XP bar starts at y=35)
-                gfx.lineStyle(1.5, 0xffffff, 0.6);
-                gfx.lineBetween(10, ropeY, w - 10, ropeY);
-                for (let x = 16; x < w - 24; x += 22) {
-                    gfx.fillStyle(colors[cIdx % 4], 0.95);
-                    gfx.fillTriangle(x, ropeY, x + 14, ropeY, x + 7, ropeY + 11);
+                const ropeY = 8;
+                this.decorationsGfx.lineStyle(1.5, 0xffffff, 0.7);
+                this.decorationsGfx.lineBetween(0, ropeY, w, ropeY);
+                for (let x = 0; x < w; x += 18) {
+                    const triW = Math.min(16, w - x);
+                    this.decorationsGfx.fillStyle(colors[cIdx % 4], 0.95);
+                    this.decorationsGfx.fillTriangle(x, ropeY, x + triW, ropeY, x + (triW / 2), ropeY + 11);
                     cIdx++;
                 }
-                this.mainContainer.add(gfx);
             }
 
-            // 2. Perimeter Bushes / Trees: Lush, taller green shrub hedges along the ground horizon
+            // 2. Perimeter Bushes / Trees: Anchored directly flush to splitY ground horizon across full width
             if (this.state.hasTrees) {
-                const gfx = this.add.graphics();
                 const baseY = (splitY || 280);
-                for (let x = 8; x < w - 8; x += 32) {
-                    // Deep forest base
-                    gfx.fillStyle(0x1b5e20, 1);
-                    gfx.fillRoundedRect(x, baseY - 26, 26, 28, 7);
+                for (let x = -5; x <= w + 10; x += 28) {
+                    // Deep forest base - flush to ground horizon
+                    this.decorationsGfx.fillStyle(0x1b5e20, 1);
+                    this.decorationsGfx.fillRoundedRect(x, baseY - 22, 26, 24, 6);
                     // Mid-tone rich foliage
-                    gfx.fillStyle(0x2e7d32, 1);
-                    gfx.fillCircle(x + 13, baseY - 18, 12);
+                    this.decorationsGfx.fillStyle(0x2e7d32, 1);
+                    this.decorationsGfx.fillCircle(x + 13, baseY - 15, 11);
                     // Top vibrant foliage highlight
-                    gfx.fillStyle(0x388e3c, 1);
-                    gfx.fillCircle(x + 13, baseY - 25, 8);
+                    this.decorationsGfx.fillStyle(0x388e3c, 1);
+                    this.decorationsGfx.fillCircle(x + 13, baseY - 21, 7.5);
                 }
-                this.mainContainer.add(gfx);
             }
 
             // 3. Fairy Lights: Warm glowing fairy lights nestled into the taller bushes
             if (this.state.hasFairyLights && this.state.hasTrees) {
-                const gfx = this.add.graphics();
                 const baseY = (splitY || 280);
-                for (let x = 8; x < w - 8; x += 32) {
+                for (let x = -5; x <= w + 10; x += 28) {
                     // Staggered light 1 (upper left)
-                    const lx1 = x + 7, ly1 = baseY - 24;
-                    gfx.fillStyle(0xffeb3b, 0.35);
-                    gfx.fillCircle(lx1, ly1, 5);
-                    gfx.fillStyle(0xfff9c4, 1);
-                    gfx.fillCircle(lx1, ly1, 2);
+                    const lx1 = x + 6, ly1 = baseY - 20;
+                    this.decorationsGfx.fillStyle(0xffeb3b, 0.35);
+                    this.decorationsGfx.fillCircle(lx1, ly1, 5);
+                    this.decorationsGfx.fillStyle(0xfff9c4, 1);
+                    this.decorationsGfx.fillCircle(lx1, ly1, 2);
 
                     // Staggered light 2 (mid right)
-                    const lx2 = x + 19, ly2 = baseY - 16;
-                    gfx.fillStyle(0xffeb3b, 0.35);
-                    gfx.fillCircle(lx2, ly2, 5);
-                    gfx.fillStyle(0xfff9c4, 1);
-                    gfx.fillCircle(lx2, ly2, 2);
+                    const lx2 = x + 19, ly2 = baseY - 13;
+                    this.decorationsGfx.fillStyle(0xffeb3b, 0.35);
+                    this.decorationsGfx.fillCircle(lx2, ly2, 5);
+                    this.decorationsGfx.fillStyle(0xfff9c4, 1);
+                    this.decorationsGfx.fillCircle(lx2, ly2, 2);
 
                     // Staggered light 3 (center peak)
-                    const lx3 = x + 13, ly3 = baseY - 29;
-                    gfx.fillStyle(0xffd54f, 0.4);
-                    gfx.fillCircle(lx3, ly3, 4);
-                    gfx.fillStyle(0xffffff, 1);
-                    gfx.fillCircle(lx3, ly3, 1.8);
+                    const lx3 = x + 13, ly3 = baseY - 24;
+                    this.decorationsGfx.fillStyle(0xffd54f, 0.4);
+                    this.decorationsGfx.fillCircle(lx3, ly3, 4);
+                    this.decorationsGfx.fillStyle(0xffffff, 1);
+                    this.decorationsGfx.fillCircle(lx3, ly3, 1.8);
                 }
-                this.mainContainer.add(gfx);
             }
 
             // 4. Diamond Accents
             if (this.state.hasDiamonds) {
-                const gfx = this.add.graphics();
-                gfx.fillStyle(0x00e5ff, 0.85);
-                gfx.fillTriangle(14, h / 2, 22, h / 2 - 8, 30, h / 2);
-                gfx.fillTriangle(14, h / 2, 22, h / 2 + 8, 30, h / 2);
-
-                gfx.fillTriangle(w - 30, h / 2, w - 22, h / 2 - 8, w - 14, h / 2);
-                gfx.fillTriangle(w - 30, h / 2, w - 22, h / 2 + 8, w - 14, h / 2);
-                this.mainContainer.add(gfx);
+                this.decorationsGfx.fillStyle(0x00e5ff, 0.85);
+                this.decorationsGfx.fillTriangle(14, h / 2, 22, h / 2 - 8, 30, h / 2);
+                this.decorationsGfx.fillTriangle(14, h / 2, 22, h / 2 + 8, 30, h / 2);
+                this.decorationsGfx.fillTriangle(w - 30, h / 2, w - 22, h / 2 - 8, w - 14, h / 2);
+                this.decorationsGfx.fillTriangle(w - 30, h / 2, w - 22, h / 2 + 8, w - 14, h / 2);
             }
         }
 
         renderMeadowShopLine(w, splitY) {
             this.splitY = splitY;
             const walkY = splitY - 20;
-            const slotSpacing = 82;
-            const slot0X = 58;
+
+            const pageCenter = Math.round(w / 2);
+            const storeX = Math.round(pageCenter - 65);
+            const factoryX = Math.round(pageCenter + 65);
+
+            // Render temporary representative blocks for Store and Factory
+            this.renderRepresentativeBlocks(storeX, factoryX, splitY - 24);
 
             if (!this.shopCustomers) this.shopCustomers = [];
 
@@ -1765,7 +1899,7 @@ const htmlContent = `<!DOCTYPE html>
                     cust.container.destroy();
                     cust.container = null;
                 }
-                const targetX = slot0X + (idx * slotSpacing);
+                const targetX = this.getShopQueueSlotX(idx);
                 this.createBuyerContainer(cust, idx, walkY, targetX);
             });
 
@@ -1773,6 +1907,60 @@ const htmlContent = `<!DOCTYPE html>
             while (this.shopCustomers.length < 3) {
                 this.spawnShopCustomer(true);
             }
+        }
+
+        renderRepresentativeBlocks(storeX, factoryX, blockY) {
+            const bw = 54, bh = 44;
+
+            // STORE BLOCK (Temporary representative building)
+            const storeContainer = this.add.container(storeX, blockY).setDepth(6);
+            const sGfx = this.add.graphics();
+            sGfx.fillStyle(0x1e293b, 0.95);
+            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+            sGfx.lineStyle(2, 0x475569, 1);
+            sGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+            // Green & white awning
+            sGfx.fillStyle(0x15803d, 1);
+            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, 10, 3);
+            sGfx.fillStyle(0xffffff, 0.35);
+            sGfx.fillRect(-bw / 2 + 10, -bh / 2, 8, 10);
+            sGfx.fillRect(-bw / 2 + 28, -bh / 2, 8, 10);
+
+            const storeIcon = this.add.text(0, -5, '🏪', { fontSize: '18px' }).setOrigin(0.5);
+            const storeLabel = this.add.text(0, 13, 'STORE', { fontSize: '8.5px', style: 'bold', color: '#86efac' }).setOrigin(0.5);
+            storeContainer.add([sGfx, storeIcon, storeLabel]);
+            storeContainer.setSize(bw, bh);
+            storeContainer.setInteractive({ useHandCursor: true });
+            storeContainer.on('pointerup', () => {
+                this.refreshBuyerBubbles();
+            });
+
+            // FACTORY BLOCK (Click to enter Factory Crafting Workshop)
+            const factoryContainer = this.add.container(factoryX, blockY).setDepth(6);
+            const fGfx = this.add.graphics();
+            fGfx.fillStyle(0x334155, 0.95);
+            fGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+            fGfx.lineStyle(2, this.state.factoryUnlocked ? 0x38bdf8 : 0x64748b, 1);
+            fGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+            // Chimney stack
+            fGfx.fillStyle(0x475569, 1);
+            fGfx.fillRect(bw / 2 - 14, -bh / 2 - 8, 8, 8);
+            fGfx.lineStyle(1.5, 0x94a3b8, 0.8);
+            fGfx.strokeRect(bw / 2 - 14, -bh / 2 - 8, 8, 8);
+
+            const factoryIcon = this.add.text(0, -5, '🏭', { fontSize: '18px' }).setOrigin(0.5);
+            const isFactUnlocked = !!this.state.factoryUnlocked;
+            const factoryLabel = this.add.text(0, 13, isFactUnlocked ? 'FACTORY' : 'FACTORY 🔒', {
+                fontSize: '8px', style: 'bold', color: isFactUnlocked ? '#93c5fd' : '#f59e0b'
+            }).setOrigin(0.5);
+            factoryContainer.add([fGfx, factoryIcon, factoryLabel]);
+            factoryContainer.setSize(bw, bh);
+            factoryContainer.setInteractive({ useHandCursor: true });
+            factoryContainer.on('pointerup', () => {
+                this.openModal('factory');
+            });
+
+            this.mainContainer.add([storeContainer, factoryContainer]);
         }
 
         updateCustomerShopUI() {
@@ -1994,7 +2182,7 @@ const htmlContent = `<!DOCTYPE html>
             const bx = (w - barW) / 2;
 
             const neededXP = this.state.level * 20;
-            const pct = Math.min(1, this.state.xp / neededXP);
+            const pct = Math.min(1, Math.max(0, this.state.xp / neededXP));
 
             const bgGfx = this.add.graphics();
             bgGfx.fillStyle(0x222222, 1);
@@ -2002,16 +2190,32 @@ const htmlContent = `<!DOCTYPE html>
             bgGfx.lineStyle(1.5, 0x00ff00, 1);
             bgGfx.strokeRect(bx, y, barW, barH);
 
-            const fillGfx = this.add.graphics();
-            fillGfx.fillStyle(0x2e7d32, 1);
-            fillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
+            this.xpBarFillGfx = this.add.graphics();
+            this.xpBarFillGfx.fillStyle(0x2e7d32, 1);
+            this.xpBarFillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
 
             const sp = this.state.skillPoints || 0;
-            const barText = this.add.text(w / 2, y + (barH / 2), \`LEVEL \${this.state.level} (\${this.state.xp}/\${neededXP} XP)  ⭐ \${sp} SP\`, {
+            this.xpBarText = this.add.text(w / 2, y + (barH / 2), 'LEVEL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP)  ⭐ ' + sp + ' SP', {
                 fontSize: '11px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
-            this.mainContainer.add([bgGfx, fillGfx, barText]);
+            this.xpBarConfig = { bx, y, barW, barH, w };
+
+            this.mainContainer.add([bgGfx, this.xpBarFillGfx, this.xpBarText]);
+        }
+
+        updateXPBarUI() {
+            if (!this.xpBarFillGfx || !this.xpBarText || !this.xpBarConfig) return;
+            const { bx, y, barW, barH, w } = this.xpBarConfig;
+            const neededXP = this.state.level * 20;
+            const pct = Math.min(1, Math.max(0, this.state.xp / neededXP));
+
+            this.xpBarFillGfx.clear();
+            this.xpBarFillGfx.fillStyle(0x2e7d32, 1);
+            this.xpBarFillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
+
+            const sp = this.state.skillPoints || 0;
+            this.xpBarText.setText('LEVEL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP)  ⭐ ' + sp + ' SP');
         }
 
         renderTopHUDBar(w, topBarY, isMobile) {
@@ -2086,16 +2290,17 @@ const htmlContent = `<!DOCTYPE html>
         drawAutoSortProgress(progress) {
             if (!this.autoSortGfx) return;
             this.autoSortGfx.clear();
-            if (!this.state.unlockedAutoSort || this.trashQueue.length === 0) return;
+            const excess = this.state.excessTrashCount || 0;
+            if (!this.state.unlockedAutoSort || excess <= 0) return;
 
-            const lastIdx = this.trashQueue.length - 1;
-            const lastItem = this.trashQueue[lastIdx];
-            const targetX = (lastItem && lastItem.container) ? lastItem.container.x : (this.queueStartX + (lastIdx * 56));
-            const targetY = (lastItem && lastItem.container) ? lastItem.container.y : this.queueY;
+            const targetX = (this.overflowBlockContainer && this.overflowBlockContainer.visible) ?
+                this.overflowBlockContainer.x : (this.queueStartX + 500);
+            const targetY = this.queueY;
+
             if (progress > 0) {
                 this.autoSortGfx.lineStyle(3, 0x00e676, 1);
                 this.autoSortGfx.beginPath();
-                this.autoSortGfx.arc(targetX, targetY, 30, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + (360 * progress)), false);
+                this.autoSortGfx.arc(targetX, targetY, 28, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + (360 * progress)), false);
                 this.autoSortGfx.strokePath();
             }
         }
@@ -2174,36 +2379,45 @@ const htmlContent = `<!DOCTYPE html>
         createItemGraphic(typeId, itemName, forcedMultiplier = 1, fixedSpriteKey = null) {
             const typeData = TRASH_TYPES[typeId];
             const container = this.add.container(0, 0).setDepth(10);
+            if (this.conveyorContainer) this.conveyorContainer.add(container);
+            else if (this.mainContainer) this.mainContainer.add(container);
             const isBgUnlocked = this.state.binUpgrades[typeId].bgUnlocked;
 
             const spriteKey = fixedSpriteKey || typeData.sprites[Math.floor(Math.random() * typeData.sprites.length)];
             const multiplier = forcedMultiplier;
+            const baseSz = this.itemDisplaySize || 46;
 
             if (multiplier === 4) {
-                // QUADRUPLE: Pile of 4 identical PNG icons (one in each corner)
-                const offsets = [ {x: -12, y: -12}, {x: 12, y: -12}, {x: -12, y: 12}, {x: 12, y: 12} ];
+                // QUADRUPLE: Pile of 4 identical PNG icons
+                const off = Math.round(baseSz * 0.22);
+                const iconSz = Math.round(baseSz * 0.52);
+                const bgR = Math.round(baseSz * 0.26);
+                const offsets = [ {x: -off, y: -off}, {x: off, y: -off}, {x: -off, y: off}, {x: off, y: off} ];
                 offsets.forEach(pos => {
                     if (isBgUnlocked) {
                         const circleGfx = this.add.graphics();
                         circleGfx.fillStyle(typeData.color, 1);
-                        circleGfx.fillCircle(pos.x, pos.y, 14);
+                        circleGfx.fillCircle(pos.x, pos.y, bgR);
                         circleGfx.lineStyle(2, 0x000000, 1);
-                        circleGfx.strokeCircle(pos.x, pos.y, 14);
+                        circleGfx.strokeCircle(pos.x, pos.y, bgR);
                         container.add(circleGfx);
                     }
-                    const img = this.add.image(pos.x, pos.y, spriteKey).setDisplaySize(30, 30);
+                    const img = this.add.image(pos.x, pos.y, spriteKey).setDisplaySize(iconSz, iconSz);
                     container.add(img);
                 });
             } else if (multiplier === 2) {
                 // DOUBLE: 2 identical PNG icons (top-right & bottom-left)
-                const offsets = [ {x: 8, y: -8, sz: 40}, {x: -6, y: 6, sz: 44} ];
+                const off = Math.round(baseSz * 0.16);
+                const iconSz = Math.round(baseSz * 0.72);
+                const bgR = Math.round(baseSz * 0.36);
+                const offsets = [ {x: off, y: -off, sz: iconSz}, {x: -off, y: off, sz: iconSz} ];
                 offsets.forEach(pos => {
                     if (isBgUnlocked) {
                         const circleGfx = this.add.graphics();
                         circleGfx.fillStyle(typeData.color, 1);
-                        circleGfx.fillCircle(pos.x, pos.y, 20);
+                        circleGfx.fillCircle(pos.x, pos.y, bgR);
                         circleGfx.lineStyle(2.5, 0x000000, 1);
-                        circleGfx.strokeCircle(pos.x, pos.y, 20);
+                        circleGfx.strokeCircle(pos.x, pos.y, bgR);
                         container.add(circleGfx);
                     }
                     const img = this.add.image(pos.x, pos.y, spriteKey).setDisplaySize(pos.sz, pos.sz);
@@ -2211,15 +2425,17 @@ const htmlContent = `<!DOCTYPE html>
                 });
             } else {
                 // SINGLE: 1 icon centered
+                const iconSz = Math.round(baseSz * 0.88);
+                const bgR = Math.round(baseSz * 0.44);
                 if (isBgUnlocked) {
                     const circleGfx = this.add.graphics();
                     circleGfx.fillStyle(typeData.color, 1);
-                    circleGfx.fillCircle(0, 0, 26);
-                    circleGfx.lineStyle(3, 0x000000, 1); // 3px outline mimicking rubbish sprite cartoon border
-                    circleGfx.strokeCircle(0, 0, 26);
+                    circleGfx.fillCircle(0, 0, bgR);
+                    circleGfx.lineStyle(2.5, 0x000000, 1);
+                    circleGfx.strokeCircle(0, 0, bgR);
                     container.add(circleGfx);
                 }
-                const img = this.add.image(0, 0, spriteKey).setDisplaySize(52, 52);
+                const img = this.add.image(0, 0, spriteKey).setDisplaySize(iconSz, iconSz);
                 container.add(img);
             }
 
@@ -2261,39 +2477,47 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         renderHorizontalQueue() {
-            if (!this.queueCounterText) return;
-            const cap = this.state.maxTrashQueue;
-            const capStr = (cap === Infinity) ? '∞' : cap;
+            const gap = this.queueGap || 50;
+            const qStartX = this.queueStartX;
+            const qY = this.queueY;
+            const itemSz = this.itemDisplaySize || 50;
 
-            if (this.trashQueue.length > 10) {
-                const excess = this.trashQueue.length - 10;
-                this.queueCounterText.setText('10/' + capStr + ' (+' + excess + ' queued)');
-            } else {
-                this.queueCounterText.setText(this.trashQueue.length + '/' + capStr);
+            const excess = this.state.excessTrashCount || 0;
+            if (this.overflowBlockContainer) {
+                if (excess > 0) {
+                    const overflowX = qStartX + (10 * gap);
+                    this.overflowBlockContainer.setPosition(overflowX, qY);
+                    this.overflowNumText.setText('+' + excess);
+                    this.overflowBlockContainer.setVisible(true);
+                } else {
+                    this.overflowBlockContainer.setVisible(false);
+                }
             }
-            this.queueCounterText.setColor(cap !== Infinity && this.trashQueue.length >= cap ? '#ff5252' : '#00ff00');
 
-            const sFactor = (this.mainContainer && this.mainContainer.scaleX) ? this.mainContainer.scaleX : 1;
-            const gap = 56 * sFactor;
-            const qStartX = this.queueStartX * sFactor;
-            const qY = this.queueY * sFactor;
+            if (this.queueCounterText) {
+                this.queueCounterText.setVisible(false);
+            }
+
+            if (this.trashQueue.length === 0) {
+                if (this.queueHighlight) this.queueHighlight.setVisible(false);
+                return;
+            }
 
             this.trashQueue.forEach((item, index) => {
                 if (index < 10) {
+                    const targetX = qStartX + (index * gap);
                     if (!item.container || !item.container.scene) {
                         const fixedKey = item.spriteKey || (item.container && item.container.spriteKey);
                         item.spriteKey = fixedKey;
                         item.container = this.createItemGraphic(item.type, null, item.multiplier || 1, fixedKey);
-                        item.container.setPosition(qStartX + (index * gap) + 30, qY);
+                        item.container.setPosition(targetX, qY);
                     }
 
-                    item.container.setScale(sFactor);
-
-                    const targetX = qStartX + (index * gap);
                     let itemAlpha = 1;
                     if (index >= 6) itemAlpha = Math.max(0.2, 1 - ((index - 5) * 0.2));
 
-                    if (this.tweens && this.tweens.add) {
+                    if (this.tweens) {
+                        this.tweens.killTweensOf(item.container);
                         this.tweens.add({
                             targets: item.container,
                             x: targetX,
@@ -2308,10 +2532,14 @@ const htmlContent = `<!DOCTYPE html>
                     }
 
                     if (index === 0) {
+                        const hs = itemSz + 6;
+                        this.queueHighlight.clear();
+                        this.queueHighlight.lineStyle(3, 0xffd700, 1);
+                        this.queueHighlight.strokeRect(-hs / 2, -hs / 2, hs, hs);
                         this.queueHighlight.setVisible(true);
-                        this.queueHighlight.setPosition(this.queueStartX, this.queueY);
+                        this.queueHighlight.setPosition(targetX, qY);
 
-                        item.container.setSize(52, 52);
+                        item.container.setSize(itemSz, itemSz);
                         item.container.setInteractive({ draggable: true });
                         this.input.setDraggable(item.container);
 
@@ -2336,10 +2564,8 @@ const htmlContent = `<!DOCTYPE html>
 
                             let droppedBin = null;
                             this.bins.forEach(b => {
-                                const binWorldX = b.x * sFactor;
-                                const binWorldY = b.y * sFactor;
-                                const hitDist = 65 * sFactor;
-                                if (Phaser.Math.Distance.Between(item.container.x, item.container.y, binWorldX, binWorldY) < hitDist) {
+                                const dist = Phaser.Math.Distance.Between(item.container.x, item.container.y, b.x, b.y);
+                                if (dist < 75) {
                                     droppedBin = b;
                                 }
                             });
@@ -2354,7 +2580,6 @@ const htmlContent = `<!DOCTYPE html>
                         if (item.container.input) item.container.disableInteractive();
                     }
                 } else {
-                    // Excess queue items (> 9) are kept as pure data without containers
                     if (item.container) {
                         item.container.destroy();
                         item.container = null;
@@ -2366,6 +2591,7 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         sortHeadTrash(targetType, itemIndex = 0) {
+            if (this.arcadeState && this.arcadeState.active) return;
             if (this.trashQueue.length === 0 || itemIndex >= this.trashQueue.length) return;
 
             const isManualSort = (itemIndex === 0);
@@ -2394,6 +2620,7 @@ const htmlContent = `<!DOCTYPE html>
                 return;
             }
 
+            this.fillQueueFromExcess();
             this.renderHorizontalQueue();
 
             const hasContainer = !!(item && item.container && item.container.scene);
@@ -2412,12 +2639,20 @@ const htmlContent = `<!DOCTYPE html>
                         this.state.streakTimer = 2000;
                     }
 
-                    const mult = item.multiplier || 1;
+                    let mult = item.multiplier || 1;
+                    if (this.state.streak >= 10) {
+                        mult *= 2;
+                    }
                     this.state.resources[targetType] += mult;
                     this.addXP(mult);
 
                     if (targetBin) {
-                        const popText = mult > 1 ? ('+' + mult + ' Tokens (' + mult + 'X!)') : '+1 Token';
+                        let popText = '+1 Token';
+                        if (this.state.streak >= 10) {
+                            popText = '🔥 +' + mult + ' Tokens (2X STREAK!)';
+                        } else if (mult > 1) {
+                            popText = '+' + mult + ' Tokens (' + mult + 'X!)';
+                        }
                         const popOne = this.add.text(targetBin.x, targetBin.y - 15, popText, {
                             fontSize: '14px', style: 'bold', color: mult > 1 ? '#ffd700' : '#00ff00'
                         }).setOrigin(0.5).setDepth(20);
@@ -2435,7 +2670,11 @@ const htmlContent = `<!DOCTYPE html>
                 }
 
                 if (this.dumpsterStreakText) {
-                    this.dumpsterStreakText.setText('🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore);
+                    let streakLabel = '🔥 STREAK: ' + this.state.streak;
+                    if (this.state.streak >= 10 && this.state.streakTimer > 0) {
+                        streakLabel = '🔥 2X STREAK: ' + this.state.streak + ' (2X BONUS!)';
+                    }
+                    this.dumpsterStreakText.setText(streakLabel + '  |  BEST: ' + this.state.streakHighScore);
                 }
                 this.updateUI();
                 this.renderHorizontalQueue();
@@ -2573,13 +2812,19 @@ const htmlContent = `<!DOCTYPE html>
                     {
                         id: 'footTraffic',
                         name: 'Foot Traffic (+10%)',
-                        desc: \`Arrival: \${(this.state.customerSpawnChance * 100).toFixed(0)}%/s ➔ \${Math.min(100, (this.state.customerSpawnChance + 0.10) * 100).toFixed(0)}%/s (+10%)\`,
+                        desc: \`Arrival: \${(this.state.customerSpawnChance * 100).toFixed(0)}% / \${(this.state.spawnDelay / 1000).toFixed(1)}s ➔ \${Math.min(100, (this.state.customerSpawnChance + 0.10) * 100).toFixed(0)}% (+10%)\`,
                         cost: '$' + this.state.upgrades.footTraffic.cost,
-                        lvl: this.state.upgrades.footTraffic.lvl, max: 5, reqLvl: 2,
-                        canAfford: this.state.money >= this.state.upgrades.footTraffic.cost,
+                        lvl: this.state.upgrades.footTraffic.lvl, max: 7, reqLvl: 2,
+                        canAfford: this.state.upgrades.footTraffic.lvl < 7 && this.state.money >= this.state.upgrades.footTraffic.cost,
                         action: () => {
                             this.state.money -= this.state.upgrades.footTraffic.cost;
                             this.state.customerSpawnChance = Math.min(1.0, this.state.customerSpawnChance + 0.10);
+                            if (this.state.customerSpawnChance >= 0.70) {
+                                this.state.spawnDelay = Math.max(1200, this.state.spawnDelay - 200);
+                            }
+                            if (this.spawnerEvent) {
+                                this.spawnerEvent.delay = this.state.spawnDelay;
+                            }
                             this.state.upgrades.footTraffic.lvl++;
                             this.state.upgrades.footTraffic.cost *= 2;
                         }
@@ -2668,15 +2913,33 @@ const htmlContent = `<!DOCTYPE html>
                     },
                     {
                         id: 'autoSort',
-                        name: 'Auto-Sort From Excess (8s)',
-                        desc: 'Sorts items from excess queue (+queued) right-to-left every 8s while leaving visible 10 items untouched!',
-                        cost: '$25',
-                        lvl: this.state.upgrades.autoSort.lvl, max: 1, reqLvl: 3,
-                        canAfford: !this.state.unlockedAutoSort && this.state.money >= 25,
+                        name: !this.state.unlockedAutoSort
+                            ? 'Auto-Sort From Excess (8s)'
+                            : (this.state.upgrades.autoSort.lvl >= (this.state.upgrades.autoSort.max || 8)
+                                ? 'Auto-Sort Speed (MAX)'
+                                : ('Auto-Sort Speed (Lv. ' + this.state.upgrades.autoSort.lvl + ')')),
+                        desc: !this.state.unlockedAutoSort
+                            ? 'Sorts items from excess queue (+queued) right-to-left every 8.0s while leaving visible 10 items untouched!'
+                            : (this.state.upgrades.autoSort.lvl >= (this.state.upgrades.autoSort.max || 8)
+                                ? ('Maximum sorting speed reached (' + (this.state.autoSortDelay / 1000).toFixed(1) + 's interval)!')
+                                : ('Interval: ' + (this.state.autoSortDelay / 1000).toFixed(1) + 's ➔ ' + (Math.max(1600, this.state.autoSortDelay - 800) / 1000).toFixed(1) + 's (-0.8s)')),
+                        cost: (this.state.upgrades.autoSort.lvl >= (this.state.upgrades.autoSort.max || 8))
+                            ? 'MAX'
+                            : ('$' + this.state.upgrades.autoSort.cost),
+                        lvl: this.state.upgrades.autoSort.lvl, max: 8, reqLvl: 2,
+                        canAfford: this.state.upgrades.autoSort.lvl < (this.state.upgrades.autoSort.max || 8) && this.state.money >= this.state.upgrades.autoSort.cost,
                         action: () => {
-                            this.state.money -= 25;
-                            this.state.unlockedAutoSort = true;
-                            this.state.upgrades.autoSort.lvl = 1;
+                            this.state.money -= this.state.upgrades.autoSort.cost;
+                            if (!this.state.unlockedAutoSort) {
+                                this.state.unlockedAutoSort = true;
+                                this.state.autoSortDelay = 8000;
+                                this.state.upgrades.autoSort.lvl = 1;
+                                this.state.upgrades.autoSort.cost = 25;
+                            } else {
+                                this.state.autoSortDelay = Math.max(1600, this.state.autoSortDelay - 800);
+                                this.state.upgrades.autoSort.lvl++;
+                                this.state.upgrades.autoSort.cost = Math.round(this.state.upgrades.autoSort.cost * 1.6);
+                            }
                             this.requestLayoutRebuild();
                         }
                     },
@@ -2848,6 +3111,29 @@ const htmlContent = `<!DOCTYPE html>
                         }
                     }
                 ];
+            } else if (catKey === 'bins') {
+                const binKeys = [
+                    { id: 'organic', name: '🟢 Green Bin', tokenName: 'Green' },
+                    { id: 'paper', name: '🔵 Paper Bin', tokenName: 'Paper' },
+                    { id: 'glass', name: '🟣 Glass Bin', tokenName: 'Glass' },
+                    { id: 'plastic', name: '🟡 Plastic Bin', tokenName: 'Plastic' }
+                ];
+                if (this.state.unlockedTypes.metal) binKeys.push({ id: 'metal', name: '⚪ Metal Bin', tokenName: 'Metal' });
+                if (this.state.unlockedTypes.fabric) binKeys.push({ id: 'fabric', name: '🌸 Fabric Bin', tokenName: 'Fabric' });
+
+                upgradeList = [];
+                binKeys.forEach(b => {
+                    const bId = b.id;
+                    const bUp = this.state.binUpgrades[bId] || { bgUnlocked: false, shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false };
+                    const tName = b.tokenName;
+
+                    upgradeList.push(
+                        { id: bId + '_bgUnlocked', name: b.name + ' (Lvl 1: Colored Background)', desc: '10px circular colored backing under item', cost: '10 ' + tName + ' Tokens', lvl: bUp.bgUnlocked ? 1 : 0, max: 1, reqLvl: 1, canAfford: !bUp.bgUnlocked && this.state.resources[bId] >= 10, action: () => { this.state.resources[bId] -= 10; bUp.bgUnlocked = true; } },
+                        { id: bId + '_shopUnlocked', name: b.name + ' (Lvl 2: Unlock Workshop T1)', desc: 'Unlocks T1 craftables in workshop', cost: '$5 + 5 ' + tName + ' Tokens', lvl: bUp.shopUnlocked ? 1 : 0, max: 1, reqLvl: 1, canAfford: !bUp.shopUnlocked && this.state.money >= 5 && this.state.resources[bId] >= 5, action: () => { this.state.money -= 5; this.state.resources[bId] -= 5; bUp.shopUnlocked = true; this.state.unlockedWorkshopsFacility = true; } },
+                        { id: bId + '_tier2Unlocked', name: b.name + ' (Lvl 3: Unlock Tier 2)', desc: 'Unlocks Tier 2 craftable recipes', cost: '$10 + 10 ' + tName + ' Tokens', lvl: bUp.tier2Unlocked ? 1 : 0, max: 1, reqLvl: 2, canAfford: bUp.shopUnlocked && !bUp.tier2Unlocked && this.state.money >= 10 && this.state.resources[bId] >= 10, action: () => { this.state.money -= 10; this.state.resources[bId] -= 10; bUp.tier2Unlocked = true; } },
+                        { id: bId + '_tier3Unlocked', name: b.name + ' (Lvl 4: Unlock Tier 3)', desc: 'Unlocks Tier 3 advanced craftables', cost: '$15 + 15 ' + tName + ' Tokens', lvl: bUp.tier3Unlocked ? 1 : 0, max: 1, reqLvl: 3, canAfford: bUp.tier2Unlocked && !bUp.tier3Unlocked && this.state.money >= 15 && this.state.resources[bId] >= 15, action: () => { this.state.money -= 15; this.state.resources[bId] -= 15; bUp.tier3Unlocked = true; } }
+                    );
+                });
             } else {
                 const bId = catKey.split('_')[0];
                 const bUp = this.state.binUpgrades[bId] || { bgUnlocked: false, shopUnlocked: false, tier2Unlocked: false, tier3Unlocked: false };
@@ -2894,6 +3180,7 @@ const htmlContent = `<!DOCTYPE html>
                 backgroundColor: isGateSel ? '#0288d1' : '#2b2b2b',
                 color: isGateSel ? '#ffffff' : (hasGateAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
             }).setInteractive({ useHandCursor: true });
+            btnGate.baseLabel = '🚪 Gate';
             btnGate.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'gate'; this.openModal('upgrades', 'gate'); });
             this.modalContainer.add(btnGate);
             currY += 28;
@@ -2905,8 +3192,21 @@ const htmlContent = `<!DOCTYPE html>
                 backgroundColor: isConveyorSel ? '#0288d1' : '#2b2b2b',
                 color: isConveyorSel ? '#ffffff' : (hasConveyorAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
             }).setInteractive({ useHandCursor: true });
+            btnConveyor.baseLabel = '🔄 Conveyor';
             btnConveyor.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'conveyor'; this.openModal('upgrades', 'conveyor'); });
             this.modalContainer.add(btnConveyor);
+            currY += 28;
+
+            const isBinsSel = (this.activeUpgradeCategory === 'bins');
+            const hasBinsAff = this.hasCategoryAffordable('bins');
+            const btnBins = this.add.text(boxLeft + 12, currY, hasBinsAff ? '🗑️ Bins (!)' : '🗑️ Bins', {
+                fontSize: '11px', style: 'bold',
+                backgroundColor: isBinsSel ? '#0288d1' : '#2b2b2b',
+                color: isBinsSel ? '#ffffff' : (hasBinsAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+            }).setInteractive({ useHandCursor: true });
+            btnBins.baseLabel = '🗑️ Bins';
+            btnBins.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'bins'; this.openModal('upgrades', 'bins'); });
+            this.modalContainer.add(btnBins);
             currY += 28;
 
             const isSkillsSel = (this.activeUpgradeCategory === 'skills');
@@ -2916,69 +3216,39 @@ const htmlContent = `<!DOCTYPE html>
                 backgroundColor: isSkillsSel ? '#0288d1' : '#2b2b2b',
                 color: isSkillsSel ? '#ffffff' : (hasSkillsAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
             }).setInteractive({ useHandCursor: true });
+            btnSkills.baseLabel = '⭐ Skills';
             btnSkills.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'skills'; this.openModal('upgrades', 'skills'); });
             this.modalContainer.add(btnSkills);
+            this.sidebarCategoryBtns = { gate: btnGate, conveyor: btnConveyor, bins: btnBins, skills: btnSkills };
             currY += 28;
 
-            const btnBinsHeader = this.add.text(boxLeft + 12, currY, this.binsSubmenuOpen ? '🚮 Bins ▼' : '🚮 Bins ▶', {
-                fontSize: '11px', style: 'bold', backgroundColor: '#1e293b', color: '#ffca28', padding: { x: 8, y: 4 }
-            }).setInteractive({ useHandCursor: true });
-            btnBinsHeader.on('pointerup', () => {
-                this.binsSubmenuOpen = !this.binsSubmenuOpen;
-                this.openModal('upgrades', this.activeUpgradeCategory, true);
-            });
-            this.modalContainer.add(btnBinsHeader);
-            currY += 26;
-
-            if (this.binsSubmenuOpen) {
-                const binCats = [
-                    { id: 'organic_shop', typeId: 'organic', name: '🟢 Green Bin' },
-                    { id: 'paper_shop', typeId: 'paper', name: '🔵 Paper Bin' },
-                    { id: 'glass_shop', typeId: 'glass', name: '🟣 Glass Bin' },
-                    { id: 'plastic_shop', typeId: 'plastic', name: '🟡 Plastic Bin' }
-                ];
-                if (this.state.unlockedTypes.metal) binCats.push({ id: 'metal_shop', typeId: 'metal', name: '⚪ Metal Bin' });
-                if (this.state.unlockedTypes.fabric) binCats.push({ id: 'fabric_shop', typeId: 'fabric', name: '🌸 Fabric Bin' });
-
-                binCats.forEach((bCat) => {
-                    const isBinSel = (this.activeUpgradeCategory === bCat.id);
-                    const hasBinAff = this.hasCategoryAffordable(bCat.id);
-                    const subBtn = this.add.text(boxLeft + 22, currY, hasBinAff ? \`\${bCat.name} (!)\` : bCat.name, {
-                        fontSize: '10.5px', style: 'bold',
-                        backgroundColor: isBinSel ? '#0288d1' : '#334155',
-                        color: isBinSel ? '#ffffff' : (hasBinAff ? '#ffd700' : '#cccccc'), padding: { x: 6, y: 3 }
-                    }).setInteractive({ useHandCursor: true });
-
-                    subBtn.on('pointerup', () => {
-                        this.upgradeScrollY = 0;
-                        this.activeUpgradeCategory = bCat.id;
-                        this.openModal('upgrades', bCat.id);
-                    });
-                    this.modalContainer.add(subBtn);
-
-                    // Add toggle ON/OFF switch if metal/fabric
-                    if (bCat.typeId === 'metal' || bCat.typeId === 'fabric') {
-                        const isActive = this.state.activeTypes[bCat.typeId];
-                        const toggleBtn = this.add.text(boxLeft + sidebarW - 14, currY, isActive ? '[ON]' : '[OFF]', {
+            if (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric) {
+                currY += 4;
+                const toggleTitle = this.add.text(boxLeft + 12, currY, 'Active Types:', { fontSize: '9px', style: 'bold', color: '#888888' });
+                this.modalContainer.add(toggleTitle);
+                currY += 15;
+                ['metal', 'fabric'].forEach(typeId => {
+                    if (this.state.unlockedTypes[typeId]) {
+                        const isActive = this.state.activeTypes[typeId];
+                        const name = typeId === 'metal' ? '⚪ Metal' : '🌸 Fabric';
+                        const toggleBtn = this.add.text(boxLeft + 12, currY, name + ': ' + (isActive ? '[ON]' : '[OFF]'), {
                             fontSize: '9px', style: 'bold',
                             backgroundColor: isActive ? '#00e676' : '#555555',
                             color: isActive ? '#000000' : '#ffffff', padding: 2
-                        }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
-
+                        }).setInteractive({ useHandCursor: true });
                         toggleBtn.on('pointerup', () => {
                             const activeCount = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length;
                             if (isActive && activeCount <= 4) {
                                 alert('⚠️ You must keep at least 4 active rubbish types!');
                                 return;
                             }
-                            this.state.activeTypes[bCat.typeId] = !isActive;
+                            this.state.activeTypes[typeId] = !isActive;
                             this.requestLayoutRebuild();
                             this.openModal('upgrades', this.activeUpgradeCategory, true);
                         });
                         this.modalContainer.add(toggleBtn);
+                        currY += 18;
                     }
-
-                    currY += 24;
                 });
             }
 
@@ -3010,15 +3280,23 @@ const htmlContent = `<!DOCTYPE html>
 
             const itemHeight = 48;
             let totalDragDistance = 0;
+            this.activeUpgradeCards = [];
 
             upgradeList.forEach((uItem, idx) => {
                 const uy = viewY + 6 + (idx * itemHeight);
                 const isLevelMet = (this.state.level >= uItem.reqLvl);
-                const isPrevUnlocked = (idx === 0) || (upgradeList[idx - 1].lvl > 0);
+                let isPrevUnlocked = true;
+                if (this.activeUpgradeCategory === 'skills') {
+                    isPrevUnlocked = (idx === 0) || (upgradeList[idx - 1].lvl > 0);
+                } else if (this.activeUpgradeCategory === 'bins') {
+                    const tierIdx = idx % 4;
+                    if (tierIdx === 2) isPrevUnlocked = (upgradeList[idx - 1].lvl > 0);
+                    if (tierIdx === 3) isPrevUnlocked = (upgradeList[idx - 1].lvl > 0);
+                }
 
                 if (!isLevelMet) {
                     const nameTxt = this.add.text(startX, uy + 6, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
-                    const lockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, \`[ Requires Level \${uItem.reqLvl} ]\`, {
+                    const lockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, `[ Requires Level ${uItem.reqLvl} ]`, {
                         fontSize: '10.5px', style: 'bold', color: '#ff9800'
                     }).setOrigin(1, 0);
 
@@ -3044,17 +3322,20 @@ const htmlContent = `<!DOCTYPE html>
                             color: uItem.canAfford ? '#000' : '#aaa', padding: 4
                         }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
 
-                        if (uItem.canAfford) {
-                            btnBuy.on('pointerup', (pointer) => {
-                                if (totalDragDistance > 8) return;
-                                if (pointer.y < viewY || pointer.y > viewBottomY) return;
-                                uItem.action();
+                        btnBuy.on('pointerup', (pointer) => {
+                            if (totalDragDistance > 8) return;
+                            if (pointer.y < viewY || pointer.y > viewBottomY) return;
+                            const curList = this.getUpgradeListForCategory(this.activeUpgradeCategory);
+                            const curItem = curList[idx];
+                            if (curItem && curItem.canAfford) {
+                                curItem.action();
                                 if (this.modalWalletTxt) this.modalWalletTxt.setText('$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP');
                                 this.requestLayoutRebuild();
                                 this.openModal('upgrades', this.activeUpgradeCategory, true);
-                            });
-                        }
+                            }
+                        });
                         this.upgradeListContainer.add([infoTxt, btnBuy]);
+                        this.activeUpgradeCards.push({ btnBuy, idx });
                     }
                 }
             });
@@ -3341,7 +3622,10 @@ const htmlContent = `<!DOCTYPE html>
             const types = ['organic', 'paper', 'glass', 'plastic'];
             const generateArcadeItem = () => {
                 const t = types[Math.floor(Math.random() * types.length)];
-                const spriteKey = TRASH_TYPES[t] ? TRASH_TYPES[t].sprite : 'person';
+                const tData = TRASH_TYPES[t];
+                const spriteKey = (tData && tData.sprites && tData.sprites.length > 0)
+                    ? tData.sprites[Math.floor(Math.random() * tData.sprites.length)]
+                    : 'person';
                 return { type: t, spriteKey: spriteKey };
             };
 
@@ -3363,10 +3647,9 @@ const htmlContent = `<!DOCTYPE html>
 
             this.arcadeContainer = this.add.container(0, 0).setDepth(80);
 
-            // Background
-            const bg = this.add.graphics();
-            bg.fillStyle(0x0a0e17, 1);
-            bg.fillRect(0, 0, w, h);
+            // Full-screen interactive background to absorb all clicks and prevent click-through to main game
+            const bg = this.add.rectangle(w / 2, h / 2, w, h, 0x0a0e17, 1).setInteractive();
+            bg.on('pointerdown', () => {});
             this.arcadeContainer.add(bg);
 
             // Header info
@@ -3395,46 +3678,41 @@ const htmlContent = `<!DOCTYPE html>
             this.arcadeQueueContainer = this.add.container(0, 0);
             this.arcadeContainer.add(this.arcadeQueueContainer);
 
-            // Bins Row
+            // Bins Row - Authentic styled bins matching main game with arcade labels
             const binY = h * 0.72;
             const binSpacing = Math.min(w / 4.6, 75);
             const startBinX = (w - (3 * binSpacing)) / 2;
 
             const bins = [
-                { id: 'organic', key: '1', name: 'GREEN', color: 0x4caf50 },
-                { id: 'paper', key: '2', name: 'PAPER', color: 0x2196f3 },
-                { id: 'glass', key: '3', name: 'GLASS', color: 0x9c27b0 },
-                { id: 'plastic', key: '4', name: 'PLAST', color: 0xffeb3b }
+                { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', color: 0x4caf50 },
+                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', color: 0x2196f3 },
+                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', color: 0x9c27b0 },
+                { id: 'plastic', key: '4', name: 'PLASTIC', sprite: 'bin_yellow', color: 0xffeb3b }
             ];
 
             bins.forEach((b, idx) => {
                 const bx = startBinX + (idx * binSpacing);
-                const bBox = this.add.graphics();
-                bBox.fillStyle(b.color, 0.85);
-                bBox.fillRoundedRect(bx - 26, binY - 26, 52, 52, 8);
-                bBox.lineStyle(2, 0xffffff, 0.9);
-                bBox.strokeRoundedRect(bx - 26, binY - 26, 52, 52, 8);
+                if (this.textures.exists(b.sprite)) {
+                    const binSprite = this.add.sprite(bx, binY, b.sprite).setDisplaySize(50, 68);
+                    this.arcadeContainer.add(binSprite);
+                } else {
+                    const bBox = this.add.graphics();
+                    bBox.fillStyle(b.color, 0.85);
+                    bBox.fillRoundedRect(bx - 26, binY - 26, 52, 52, 8);
+                    bBox.lineStyle(2, 0xffffff, 0.9);
+                    bBox.strokeRoundedRect(bx - 26, binY - 26, 52, 52, 8);
+                    this.arcadeContainer.add(bBox);
+                }
 
-                const bLabel = this.add.text(bx, binY - 34, '[' + b.key + '] ' + b.name, {
-                    fontSize: '11px', style: 'bold', color: '#ffffff'
+                const bLabel = this.add.text(bx, binY - 44, '[' + b.key + '] ' + b.name, {
+                    fontSize: '10.5px', style: 'bold', color: '#ffffff', backgroundColor: '#111827', padding: { x: 4, y: 2 }
                 }).setOrigin(0.5);
 
-                const hitZone = this.add.rectangle(bx, binY, 56, 56, 0x000000, 0.001).setInteractive({ useHandCursor: true });
+                const hitZone = this.add.rectangle(bx, binY, 60, 74, 0x000000, 0.001).setInteractive({ useHandCursor: true });
                 hitZone.on('pointerdown', () => this.sortArcadeTrash(b.id));
 
-                this.arcadeContainer.add([bBox, bLabel, hitZone]);
+                this.arcadeContainer.add([bLabel, hitZone]);
             });
-
-            // Keyboard binds
-            this.arcadeKeyHandler = (event) => {
-                if (!this.arcadeState || !this.arcadeState.active) return;
-                if (event.key === '1') this.sortArcadeTrash('organic');
-                else if (event.key === '2') this.sortArcadeTrash('paper');
-                else if (event.key === '3') this.sortArcadeTrash('glass');
-                else if (event.key === '4') this.sortArcadeTrash('plastic');
-                else if (event.key === 'Escape') this.exitArcade();
-            };
-            window.addEventListener('keydown', this.arcadeKeyHandler);
 
             this.renderArcadeQueue();
         }
@@ -3453,25 +3731,31 @@ const htmlContent = `<!DOCTYPE html>
                 const qx = startX + (idx * gap);
                 const isHero = (idx === 0);
 
-                let sprite;
+                const itemCont = this.add.container(qx, queueCenterY);
+                const bgCircle = this.add.graphics();
+                bgCircle.fillStyle(TRASH_TYPES[item.type].color, 1);
+                bgCircle.fillCircle(0, 0, 24);
+                bgCircle.lineStyle(2, 0x000000, 1);
+                bgCircle.strokeCircle(0, 0, 24);
+                itemCont.add(bgCircle);
+
                 if (this.textures.exists(item.spriteKey)) {
-                    sprite = this.add.sprite(qx, queueCenterY, item.spriteKey);
-                } else {
-                    sprite = this.add.rectangle(qx, queueCenterY, 36, 36, TRASH_TYPES[item.type].color);
+                    const img = this.add.image(0, 0, item.spriteKey).setDisplaySize(42, 42);
+                    itemCont.add(img);
                 }
 
                 if (isHero) {
-                    sprite.setScale(1.2);
+                    itemCont.setScale(1.2);
                     const heroRing = this.add.graphics();
                     heroRing.lineStyle(3, 0xffd700, 1);
-                    heroRing.strokeCircle(qx, queueCenterY, 28);
-                    this.arcadeQueueContainer.add(heroRing);
+                    heroRing.strokeCircle(0, 0, 29);
+                    itemCont.add(heroRing);
                 } else {
-                    sprite.setScale(0.85);
-                    sprite.setAlpha(0.65 - (idx * 0.07));
+                    itemCont.setScale(0.85);
+                    itemCont.setAlpha(0.65 - (idx * 0.07));
                 }
 
-                this.arcadeQueueContainer.add(sprite);
+                this.arcadeQueueContainer.add(itemCont);
             });
         }
 
@@ -3486,7 +3770,11 @@ const htmlContent = `<!DOCTYPE html>
                 this.arcadeState.queue.shift();
                 const types = ['organic', 'paper', 'glass', 'plastic'];
                 const nextType = types[Math.floor(Math.random() * types.length)];
-                this.arcadeState.queue.push({ type: nextType, spriteKey: TRASH_TYPES[nextType].sprite });
+                const nextTData = TRASH_TYPES[nextType];
+                const nextSprite = (nextTData && nextTData.sprites && nextTData.sprites.length > 0)
+                    ? nextTData.sprites[Math.floor(Math.random() * nextTData.sprites.length)]
+                    : 'person';
+                this.arcadeState.queue.push({ type: nextType, spriteKey: nextSprite });
 
                 if (this.arcadeState.mode === 'dumpster') {
                     this.arcadeState.streak++;
@@ -3643,6 +3931,31 @@ const htmlContent = `<!DOCTYPE html>
             this.requestLayoutRebuild();
         }
 
+        refreshUpgradeModalAffordances() {
+            if (!this.activeUpgradeCards || this.activeModal !== 'upgrades') return;
+            const currentList = this.getUpgradeListForCategory(this.activeUpgradeCategory);
+            this.activeUpgradeCards.forEach(c => {
+                const item = currentList[c.idx];
+                if (item && c.btnBuy && c.btnBuy.scene) {
+                    c.btnBuy.setBackgroundColor(item.canAfford ? '#00e676' : '#424242');
+                    c.btnBuy.setColor(item.canAfford ? '#000000' : '#aaaaaa');
+                }
+            });
+            if (this.sidebarCategoryBtns) {
+                const cats = ['gate', 'conveyor', 'bins', 'skills'];
+                const iconMap = { gate: '🚪 Gate', conveyor: '🔄 Conveyor', bins: '🗑️ Bins', skills: '⭐ Skills' };
+                cats.forEach(cat => {
+                    const btn = this.sidebarCategoryBtns[cat];
+                    if (btn && btn.scene) {
+                        const hasAff = this.hasCategoryAffordable(cat);
+                        const isSel = (this.activeUpgradeCategory === cat);
+                        btn.setText(hasAff ? (iconMap[cat] + ' (!)') : iconMap[cat]);
+                        if (!isSel) btn.setColor(hasAff ? '#ffd700' : '#aaaaaa');
+                    }
+                });
+            }
+        }
+
         updateUI() {
             if (this.hudTextObj) {
                 const r = this.state.resources;
@@ -3659,6 +3972,7 @@ const htmlContent = `<!DOCTYPE html>
             }
             if (this.modalWalletTxt && this.activeModal === 'upgrades') {
                 this.modalWalletTxt.setText('$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP');
+                this.refreshUpgradeModalAffordances();
             }
 
             if (this.bins) {
@@ -3670,9 +3984,14 @@ const htmlContent = `<!DOCTYPE html>
             }
 
             if (this.dumpsterStreakText) {
-                this.dumpsterStreakText.setText('🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore);
+                let streakLabel = '🔥 STREAK: ' + this.state.streak;
+                if (this.state.streak >= 10 && this.state.streakTimer > 0) {
+                    streakLabel = '🔥 2X STREAK: ' + this.state.streak + ' (2X BONUS!)';
+                }
+                this.dumpsterStreakText.setText(streakLabel + '  |  BEST: ' + this.state.streakHighScore);
             }
 
+            this.updateXPBarUI();
             this.updateCustomerShopUI();
         }
     }
