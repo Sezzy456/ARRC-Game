@@ -593,11 +593,27 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         initClouds() {
+            if (this.clouds && this.clouds.length > 0) {
+                this.clouds.forEach(c => { if (c && c.destroy) c.destroy(); });
+            }
             this.clouds = [];
             const w = this.scale.width || 800;
+            const h = this.scale.height || 600;
+            const isMobile = (h > w && w < 600) || w < 520;
+            const splitY = this.splitY || (Math.round(h * 0.50) - 44);
+
             for (let i = 0; i < 4; i++) {
                 const cx = (w / 4) * i + Phaser.Math.Between(-30, 30);
-                const cy = Phaser.Math.Between(20, 85);
+                let cy;
+                if (isMobile) {
+                    // On mobile, render clouds in the clear sky band below the wallet and top nav buttons (~128-140)
+                    // and comfortably above the meadow horizon (splitY)
+                    const minCloudY = 142;
+                    const maxCloudY = Math.max(minCloudY + 15, splitY - 55);
+                    cy = Phaser.Math.Between(minCloudY, maxCloudY);
+                } else {
+                    cy = Phaser.Math.Between(24, Math.min(85, splitY - 50));
+                }
                 const cloud = this.add.graphics().setDepth(1);
                 cloud.fillStyle(0xffffff, 0.60);
                 cloud.fillCircle(0, 0, 22);
@@ -1343,12 +1359,58 @@ const htmlContent = `<!DOCTYPE html>
             });
         }
 
+        getShopLayoutMetrics(w) {
+            const width = (this.scale && this.scale.width) ? this.scale.width : (w || window.innerWidth || 800);
+            const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
+            const isMobile = (height > width && width < 600) || width < 560;
+
+            const bw = isMobile ? (width < 380 ? 46 : 50) : 54;
+            const bh = isMobile ? 42 : 44;
+
+            if (isMobile) {
+                // On mobile, the customers, store, and factory share the horizontal space across the screen
+                const rightMargin = 10;
+                const buildingGap = 8;
+                const factoryX = Math.round(width - rightMargin - (bw / 2));
+                const storeX = Math.round(factoryX - bw - buildingGap);
+
+                const storeLeft = storeX - (bw / 2);
+                const leftMargin = 10;
+                const queueW = storeLeft - leftMargin;
+
+                // 3 slots (0, 1, 2) distributed across the left horizontal space
+                const slotSpacing = Math.min(84, Math.max(62, Math.floor((queueW - 38) / 2)));
+                const cust0X = Math.round(storeLeft - 34);
+
+                return {
+                    bw, bh,
+                    storeX,
+                    factoryX,
+                    cust0X,
+                    slotSpacing,
+                    getSlotX: (idx) => Math.round(cust0X - (idx * slotSpacing))
+                };
+            } else {
+                const pageCenter = Math.round(width / 2);
+                const storeX = Math.round(pageCenter + 35);
+                const factoryX = Math.round(storeX + bw + 24);
+                const slotSpacing = 82;
+                const cust0X = Math.round(storeX - (bw / 2) - 38);
+
+                return {
+                    bw, bh,
+                    storeX,
+                    factoryX,
+                    cust0X,
+                    slotSpacing,
+                    getSlotX: (idx) => Math.round(cust0X - (idx * slotSpacing))
+                };
+            }
+        }
+
         getShopQueueSlotX(slotIndex) {
-            const width = this.scale.width || 800;
-            const pageCenter = Math.round(width / 2);
-            const storeX = Math.round(pageCenter - 65);
-            const slotSpacing = 68;
-            return Math.round((storeX - 48) - (slotIndex * slotSpacing));
+            const metrics = this.getShopLayoutMetrics(this.scale.width);
+            return metrics.getSlotX(slotIndex);
         }
 
         spawnShopCustomer(instant = false) {
@@ -1368,10 +1430,7 @@ const htmlContent = `<!DOCTYPE html>
                 container: null
             };
 
-            const width = this.scale.width || 800;
-            const mobileWidth = Math.min(width, 480);
-            const mobileLeft = Math.round((width - mobileWidth) / 2);
-            const startX = instant ? targetX : Math.min(targetX - 70, mobileLeft - 35);
+            const startX = instant ? targetX : -40;
 
             this.createBuyerContainer(customer, slotIndex, walkY, startX);
             this.shopCustomers.push(customer);
@@ -1572,7 +1631,21 @@ const htmlContent = `<!DOCTYPE html>
             this.skyGfx.fillRect(0, splitY - 45, width, 45);
 
             if (this.clouds) {
-                this.clouds.forEach(c => c.setDepth(1));
+                this.clouds.forEach(c => {
+                    c.setDepth(1);
+                    if (isMobile) {
+                        const minCloudY = 142;
+                        const maxCloudY = Math.max(minCloudY + 15, splitY - 55);
+                        if (c.y < minCloudY || c.y > maxCloudY) {
+                            c.y = Phaser.Math.Between(minCloudY, maxCloudY);
+                        }
+                    } else {
+                        const maxCloudY = Math.min(85, splitY - 50);
+                        if (c.y > maxCloudY || c.y < 20) {
+                            c.y = Phaser.Math.Between(24, maxCloudY);
+                        }
+                    }
+                });
             }
 
             // Ground: depth 2 (above clouds, below mainContainer depth 10)
@@ -1645,9 +1718,11 @@ const htmlContent = `<!DOCTYPE html>
             this.queueActualSpan = actualQueueSpan;
             this.queueOverflowGap = overflowGap;
 
-            this.queueHighlight = this.add.graphics().setDepth(15);
+            this.queueHighlight = this.add.graphics().setDepth(25);
+            this.queueHighlight.lineStyle(4, 0x000000, 0.45);
+            this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
             this.queueHighlight.lineStyle(3, 0xffd700, 1);
-            this.queueHighlight.strokeRect(-28, -28, 56, 56);
+            this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
             this.queueHighlight.setVisible(false);
 
             // Dedicated container for all visible conveyor items inside mainContainer
@@ -2050,13 +2125,10 @@ const htmlContent = `<!DOCTYPE html>
         renderMeadowShopLine(w, splitY) {
             this.splitY = splitY;
             const walkY = splitY - 25;
+            const blockY = splitY - 28;
 
-            const pageCenter = Math.round(w / 2);
-            const storeX = Math.round(pageCenter - 65);
-            const factoryX = Math.round(pageCenter + 65);
-
-            // Render temporary representative blocks for Store and Factory (elevated cleanly above dirt)
-            this.renderRepresentativeBlocks(storeX, factoryX, splitY - 28);
+            const metrics = this.getShopLayoutMetrics(w);
+            this.renderRepresentativeBlocks(metrics.storeX, metrics.factoryX, blockY, metrics.bw, metrics.bh);
 
             if (!this.shopCustomers) this.shopCustomers = [];
 
@@ -2066,7 +2138,7 @@ const htmlContent = `<!DOCTYPE html>
                     cust.container.destroy();
                     cust.container = null;
                 }
-                const targetX = this.getShopQueueSlotX(idx);
+                const targetX = metrics.getSlotX(idx);
                 this.createBuyerContainer(cust, idx, walkY, targetX);
             });
 
@@ -2076,9 +2148,7 @@ const htmlContent = `<!DOCTYPE html>
             }
         }
 
-        renderRepresentativeBlocks(storeX, factoryX, blockY) {
-            const bw = 54, bh = 44;
-
+        renderRepresentativeBlocks(storeX, factoryX, blockY, bw = 54, bh = 44) {
             // STORE BLOCK (Temporary representative building)
             const storeContainer = this.add.container(storeX, blockY).setDepth(6);
             const sGfx = this.add.graphics();
@@ -2090,11 +2160,11 @@ const htmlContent = `<!DOCTYPE html>
             sGfx.fillStyle(0x15803d, 1);
             sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, 10, 3);
             sGfx.fillStyle(0xffffff, 0.35);
-            sGfx.fillRect(-bw / 2 + 10, -bh / 2, 8, 10);
-            sGfx.fillRect(-bw / 2 + 28, -bh / 2, 8, 10);
+            sGfx.fillRect(-bw / 2 + Math.round(bw * 0.18), -bh / 2, Math.round(bw * 0.16), 10);
+            sGfx.fillRect(-bw / 2 + Math.round(bw * 0.52), -bh / 2, Math.round(bw * 0.16), 10);
 
-            const storeIcon = this.add.text(0, -5, '🏪', { fontSize: '18px' }).setOrigin(0.5);
-            const storeLabel = this.add.text(0, 13, 'STORE', { fontSize: '8.5px', style: 'bold', color: '#86efac' }).setOrigin(0.5);
+            const storeIcon = this.add.text(0, -5, '🏪', { fontSize: bw < 50 ? '16px' : '18px' }).setOrigin(0.5);
+            const storeLabel = this.add.text(0, 13, 'STORE', { fontSize: bw < 50 ? '7.5px' : '8.5px', style: 'bold', color: '#86efac' }).setOrigin(0.5);
             storeContainer.add([sGfx, storeIcon, storeLabel]);
             storeContainer.setSize(bw, bh);
             storeContainer.setInteractive({ useHandCursor: true });
@@ -2115,10 +2185,10 @@ const htmlContent = `<!DOCTYPE html>
             fGfx.lineStyle(1.5, 0x94a3b8, 0.8);
             fGfx.strokeRect(bw / 2 - 14, -bh / 2 - 8, 8, 8);
 
-            const factoryIcon = this.add.text(0, -5, '🏭', { fontSize: '18px' }).setOrigin(0.5);
+            const factoryIcon = this.add.text(0, -5, '🏭', { fontSize: bw < 50 ? '16px' : '18px' }).setOrigin(0.5);
             const isFactUnlocked = !!this.state.factoryUnlocked;
             const factoryLabel = this.add.text(0, 13, isFactUnlocked ? 'FACTORY' : 'FACTORY 🔒', {
-                fontSize: '8px', style: 'bold', color: isFactUnlocked ? '#93c5fd' : '#f59e0b'
+                fontSize: bw < 50 ? '7.5px' : '8px', style: 'bold', color: isFactUnlocked ? '#93c5fd' : '#f59e0b'
             }).setOrigin(0.5);
             factoryContainer.add([fGfx, factoryIcon, factoryLabel]);
             factoryContainer.setSize(bw, bh);
@@ -2773,8 +2843,13 @@ const htmlContent = `<!DOCTYPE html>
 
                     if (index === 0) {
                         this.queueHighlight.clear();
+                        this.queueHighlight.setDepth(25);
+                        // Subtle contrast backdrop outline so all 4 edges pop cleanly against any surface
+                        this.queueHighlight.lineStyle(4, 0x000000, 0.45);
+                        this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
+                        // Crisp golden hero square
                         this.queueHighlight.lineStyle(3, 0xffd700, 1);
-                        this.queueHighlight.strokeRect(-28, -28, 56, 56);
+                        this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
                         this.queueHighlight.setVisible(true);
                         this.queueHighlight.setPosition(targetX, qY);
 
