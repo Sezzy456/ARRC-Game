@@ -520,18 +520,50 @@ const htmlContent = `<!DOCTYPE html>
                 }
             }
 
-            // Centralized Real-Time Simulation Clock (Supports active 60fps & background tab AFK)
+            // Centralized Real-Time Simulation Clock with unthrottled Web Worker Heartbeat
             this.lastTickTime = Date.now();
             if (typeof window !== 'undefined') {
+                if (this.bgWorker) {
+                    try { this.bgWorker.terminate(); } catch (e) {}
+                    this.bgWorker = null;
+                }
                 if (this.afkInterval) clearInterval(this.afkInterval);
-                this.afkInterval = setInterval(() => {
+
+                const onHeartbeat = () => {
                     const now = Date.now();
                     const dt = Math.max(0, now - (this.lastTickTime || now));
                     if (dt >= 120) {
                         this.lastTickTime = now;
                         this.tickGameSimulation(dt);
                     }
-                }, 150);
+                };
+
+                let workerStarted = false;
+                try {
+                    const workerBlob = new Blob([
+                        'var timer = null;' +
+                        'self.onmessage = function(e) {' +
+                        '  if (e.data === "start") {' +
+                        '    if (timer) clearInterval(timer);' +
+                        '    timer = setInterval(function() { self.postMessage("tick"); }, 200);' +
+                        '  } else if (e.data === "stop") {' +
+                        '    if (timer) clearInterval(timer); timer = null;' +
+                        '  }' +
+                        '};'
+                    ], { type: 'application/javascript' });
+                    this.bgWorker = new Worker(URL.createObjectURL(workerBlob));
+                    this.bgWorker.onmessage = (e) => {
+                        if (e.data === 'tick') onHeartbeat();
+                    };
+                    this.bgWorker.postMessage('start');
+                    workerStarted = true;
+                } catch (err) {
+                    workerStarted = false;
+                }
+
+                if (!workerStarted) {
+                    this.afkInterval = setInterval(onHeartbeat, 150);
+                }
 
                 window.addEventListener('focus', () => {
                     const now = Date.now();
@@ -539,6 +571,9 @@ const htmlContent = `<!DOCTYPE html>
                     this.lastTickTime = now;
                     if (dt > 100) {
                         this.tickGameSimulation(dt);
+                    }
+                    if (this.tweens) {
+                        this.tweens.killAll();
                     }
                     this.repositionCustomerQueue();
                     this.renderHorizontalQueue();
@@ -766,21 +801,28 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         repositionCustomerQueue() {
-            if (!this.gatePos) return;
+            if (!this.gatePos || !this.customerQueue) return;
             const count = this.customerQueue.length;
-            // Customer 0 stands right at the gate entrance counter
-            const startX = this.gatePos.x - 22;
+            // Customer 0 stands clearly on the left outside the gate entrance (not inside the gate!)
+            const startX = this.gatePos.x - 48;
             const minMargin = 16;
             const availableW = Math.max(60, startX - minMargin);
             const maxSpacing = 28;
             const spacing = count > 1 ? Math.min(maxSpacing, availableW / (count - 1)) : maxSpacing;
 
+            const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
+
             this.customerQueue.forEach((cust, idx) => {
+                if (!cust || !cust.scene) return;
                 const targetX = Math.round(startX - (idx * spacing));
-                if (this.tweens) {
+                cust.setAlpha(1);
+                cust.setVisible(true);
+                cust.setDepth(15 + (count - idx));
+
+                if (!isHidden && this.tweens) {
                     this.tweens.killTweensOf(cust);
                     const dist = Math.abs(cust.x - targetX);
-                    const duration = Math.min(280, Math.max(100, Math.round(dist * 1.0)));
+                    const duration = Math.min(260, Math.max(80, Math.round(dist * 0.9)));
                     this.tweens.add({
                         targets: cust,
                         x: targetX,
@@ -789,6 +831,7 @@ const htmlContent = `<!DOCTYPE html>
                         ease: 'Power1'
                     });
                 } else {
+                    if (this.tweens) this.tweens.killTweensOf(cust);
                     cust.x = targetX;
                     cust.y = this.gatePos.y;
                 }
@@ -797,8 +840,10 @@ const htmlContent = `<!DOCTYPE html>
 
         triggerGate() {
             if (this.arcadeState && this.arcadeState.active) return;
-            if (this.customerQueue.length === 0) {
-                if (this.gatePos) {
+            const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
+
+            if (!this.customerQueue || this.customerQueue.length === 0) {
+                if (!isHidden && this.gatePos) {
                     const cleanTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, '✨ ALL CLEAN! (No Queue)', {
                         fontSize: '11px', style: 'bold', color: '#38bdf8', backgroundColor: '#0f172a', padding: 4
                     }).setOrigin(0.5).setDepth(20);
@@ -821,29 +866,33 @@ const htmlContent = `<!DOCTYPE html>
                 this.addTrashToConveyor();
             }
 
-            const popTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, '+$' + this.state.g1Fee + ' | +' + trashGained + ' Rubbish', {
-                fontSize: '13px', style: 'bold', color: '#00ff00'
-            }).setOrigin(0.5).setDepth(20);
+            if (!isHidden) {
+                const popTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, '+$' + this.state.g1Fee + ' | +' + trashGained + ' Rubbish', {
+                    fontSize: '13px', style: 'bold', color: '#00ff00'
+                }).setOrigin(0.5).setDepth(20);
 
-            if (this.tweens && this.tweens.add) {
-                this.tweens.add({
-                    targets: popTxt,
-                    y: popTxt.y - 35,
-                    alpha: 0,
-                    duration: 900,
-                    onComplete: () => popTxt.destroy()
-                });
+                if (this.tweens && this.tweens.add) {
+                    this.tweens.add({
+                        targets: popTxt,
+                        y: popTxt.y - 35,
+                        alpha: 0,
+                        duration: 900,
+                        onComplete: () => popTxt.destroy()
+                    });
 
-                this.tweens.add({
-                    targets: cust,
-                    y: cust.y + 80,
-                    alpha: 0,
-                    duration: 250,
-                    onComplete: () => cust.destroy()
-                });
+                    this.tweens.add({
+                        targets: cust,
+                        y: cust.y + 60,
+                        alpha: 0,
+                        duration: 220,
+                        onComplete: () => cust.destroy()
+                    });
+                } else {
+                    popTxt.destroy();
+                    cust.destroy();
+                }
             } else {
-                popTxt.destroy();
-                cust.destroy();
+                if (cust && cust.destroy) cust.destroy();
             }
 
             this.repositionCustomerQueue();
@@ -1467,31 +1516,31 @@ const htmlContent = `<!DOCTYPE html>
                 this.renderTutorialBanner(width, questY + 95);
             }
 
-            // HORIZON LINE (splitY): Elevated high into upper-middle of screen (~28% of height)
-            // Store, walking customers, and factory sit above this line (walkY = splitY - 20, blocks at splitY - 24)
-            const splitY = isSmallScreen ? Math.round(height * 0.27) : Math.round(height * 0.28);
+            // HORIZON LINE (splitY): Moved up by the store's vertical height (44px) from the 50% midpoint
+            // Store, walking customers, and factory sit cleanly above this line
+            const splitY = Math.round(height * 0.50) - 44;
 
-            // TOOLBAR: Sanitiser & Pet helper buttons positioned cleanly below the horizon
-            const toolbarY = splitY + (isSmallScreen ? 32 : 34);
+            // TOOLBAR: Sanitiser & Pet helper buttons positioned neatly in the upper dirt band
+            const toolbarY = splitY + (isSmallScreen ? 8 : 10);
 
-            // CONVEYOR QUEUE ROW: Center-aligned queue sitting directly below the toolbar
-            const queueY = toolbarY + (isSmallScreen ? 40 : 44);
+            // CONVEYOR QUEUE ROW: Center-aligned queue sitting cleanly below the toolbar buttons
+            const queueY = splitY + (isSmallScreen ? 62 : 70);
             this.queueY = queueY;
 
-            // BINS ROW: Prominently spaced beneath the conveyor
-            const binH = isSmallScreen ? 80 : 92;
-            const binBaselineY = queueY + (isSmallScreen ? 38 : 42) + binH;
+            // BINS ROW: Prominently spaced beneath the conveyor so rubbish never clips bin titles
+            const binH = isSmallScreen ? 64 : 80;
+            const binBaselineY = queueY + (isSmallScreen ? 56 : 64) + binH;
             const binCenterY = binBaselineY - (binH / 2);
 
             // STREAK & HIGHSCORE: Centered directly under the bins!
-            const streakY = binBaselineY + (isSmallScreen ? 22 : 24);
+            const streakY = binBaselineY + (isSmallScreen ? 15 : 20);
             const streakX = Math.round(width / 2);
 
-            // GATE ROW: Sits with ample space below the streak/bins
-            const bottomY = streakY + (isSmallScreen ? 40 : 44);
+            // GATE ROW: Sits below the streak/bins
+            const bottomY = streakY + (height < 530 ? 24 : (isSmallScreen ? 28 : 36));
 
-            // BUS ROAD LANE: Runs along the bottom in its own clear road
-            const busY = height - (isSmallScreen ? 38 : 42);
+            // BUS ROAD LANE: Runs along the bottom in its own clear road with visible wheels
+            const busY = height - (isSmallScreen ? 32 : 34);
             this.busY = busY;
 
             if (this.skyGfx) this.skyGfx.destroy();
@@ -1606,8 +1655,8 @@ const htmlContent = `<!DOCTYPE html>
             this.overflowBlockContainer.add([overflowBg, this.overflowNumText, overflowLabel]);
             this.mainContainer.add([this.conveyorContainer, this.queueHighlight, this.overflowBlockContainer]);
 
-            // Toolbar above conveyor: Sanitiser station, Pet helpers (Center-aligned, matching compact 30x30 size!) & Auto-Sort toggle
-            const btnSize = 30;
+            // Toolbar above conveyor: Sanitiser station, Pet helpers (Center-aligned, matching compact size!) & Auto-Sort toggle
+            const btnSize = isSmallScreen ? 26 : 28;
             const btnSpacing = 7;
 
             // Collect active action buttons
@@ -1760,7 +1809,7 @@ const htmlContent = `<!DOCTYPE html>
             this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
             // 5. GATE (Direct Intake onto Conveyor Belt, positioned with ample room to the left for queueing customers)
-            const gateX = isMobile ? Math.max(160, Math.round(width * 0.35)) : Math.max(220, Math.round(width * 0.28));
+            const gateX = isMobile ? Math.max(175, Math.round(width * 0.36)) : Math.max(235, Math.round(width * 0.30));
             this.gatePos = { x: gateX, y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
@@ -1778,7 +1827,21 @@ const htmlContent = `<!DOCTYPE html>
                 this.longPressGfx, this.tutorialIndicatorsGfx
             ]);
 
-            if (!this.customerQueue || this.customerQueue.length === 0) {
+            // Rebuild customer visual containers so they are never destroyed or invisible on rebuild
+            if (this.customerQueue && this.customerQueue.length > 0) {
+                const count = this.customerQueue.length;
+                this.customerQueue.forEach(c => {
+                    if (c && c.destroy) c.destroy();
+                });
+                this.customerQueue = [];
+                for (let i = 0; i < count; i++) {
+                    const personSprite = this.add.sprite(0, 0, 'person');
+                    const bagSprite = this.add.sprite(0, 10, 'bag');
+                    const customerContainer = this.add.container(-25, this.gatePos ? this.gatePos.y : 600, [personSprite, bagSprite]).setDepth(15);
+                    if (this.mainContainer) this.mainContainer.add(customerContainer);
+                    this.customerQueue.push(customerContainer);
+                }
+            } else {
                 this.customerQueue = [];
                 for (let i = 0; i < 2; i++) this.spawnCustomer();
             }
@@ -1962,14 +2025,14 @@ const htmlContent = `<!DOCTYPE html>
 
         renderMeadowShopLine(w, splitY) {
             this.splitY = splitY;
-            const walkY = splitY - 20;
+            const walkY = splitY - 25;
 
             const pageCenter = Math.round(w / 2);
             const storeX = Math.round(pageCenter - 65);
             const factoryX = Math.round(pageCenter + 65);
 
-            // Render temporary representative blocks for Store and Factory
-            this.renderRepresentativeBlocks(storeX, factoryX, splitY - 24);
+            // Render temporary representative blocks for Store and Factory (elevated cleanly above dirt)
+            this.renderRepresentativeBlocks(storeX, factoryX, splitY - 28);
 
             if (!this.shopCustomers) this.shopCustomers = [];
 
@@ -2623,7 +2686,8 @@ const htmlContent = `<!DOCTYPE html>
                     let itemAlpha = 1;
                     if (index >= 6) itemAlpha = Math.max(0.2, 1 - ((index - 5) * 0.2));
 
-                    if (this.tweens) {
+                    const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
+                    if (!isHidden && this.tweens) {
                         this.tweens.killTweensOf(item.container);
                         this.tweens.add({
                             targets: item.container,
@@ -2633,6 +2697,7 @@ const htmlContent = `<!DOCTYPE html>
                             duration: 100
                         });
                     } else {
+                        if (this.tweens) this.tweens.killTweensOf(item.container);
                         item.container.x = targetX;
                         item.container.y = qY;
                         item.container.alpha = itemAlpha;
