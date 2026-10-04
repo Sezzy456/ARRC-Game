@@ -564,9 +564,6 @@
                     if (dt > 100) {
                         this.tickGameSimulation(dt);
                     }
-                    if (this.tweens) {
-                        this.tweens.killAll();
-                    }
                     this.repositionCustomerQueue();
                     this.renderHorizontalQueue();
                     this.updateUI();
@@ -690,7 +687,6 @@
                     const mult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
                     this.state.resources[typeKey] += mult;
                     this.state.money += 1;
-                    this.addXP(mult);
                     this.renderHorizontalQueue();
                 }
                 const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
@@ -839,10 +835,12 @@
                     const cleanTxt = this.add.text(this.gatePos.x, this.gatePos.y - 30, '✨ ALL CLEAN! (No Queue)', {
                         fontSize: '11px', style: 'bold', color: '#38bdf8', backgroundColor: '#0f172a', padding: 4
                     }).setOrigin(0.5).setDepth(20);
+                    const cleanClean = () => { if (cleanTxt && cleanTxt.active) cleanTxt.destroy(); };
+                    setTimeout(cleanClean, 1000);
                     if (this.tweens && this.tweens.add) {
-                        this.tweens.add({ targets: cleanTxt, y: cleanTxt.y - 25, alpha: 0, duration: 750, onComplete: () => cleanTxt.destroy() });
+                        this.tweens.add({ targets: cleanTxt, y: cleanTxt.y - 25, alpha: 0, duration: 750, onComplete: cleanClean });
                     } else {
-                        cleanTxt.destroy();
+                        cleanClean();
                     }
                 }
                 return;
@@ -1024,10 +1022,12 @@
                 fontSize: '12px', style: 'bold', color: TRASH_TYPES[typeId].colorHex || '#ffd700', backgroundColor: '#111', padding: 5
             }).setOrigin(0.5).setDepth(25);
 
+            const cleanPop = () => { if (pop && pop.active) pop.destroy(); };
+            setTimeout(cleanPop, 1200);
             if (this.tweens && this.tweens.add) {
-                this.tweens.add({ targets: pop, y: pop.y - 35, alpha: 0, duration: 900, onComplete: () => pop.destroy() });
+                this.tweens.add({ targets: pop, y: pop.y - 35, alpha: 0, duration: 900, onComplete: cleanPop });
             } else {
-                pop.destroy();
+                cleanPop();
             }
 
             this.fillQueueFromExcess();
@@ -1399,10 +1399,12 @@
                 fontSize: '12px', style: 'bold', color: '#00e676', backgroundColor: '#000000', padding: 3
             }).setOrigin(0.5).setDepth(40);
 
+            const cleanPopTxt = () => { if (popTxt && popTxt.active) popTxt.destroy(); };
+            setTimeout(cleanPopTxt, 1100);
             if (this.tweens && this.tweens.add) {
-                this.tweens.add({ targets: popTxt, y: popTxt.y - 25, alpha: 0, duration: 800, onComplete: () => popTxt.destroy() });
+                this.tweens.add({ targets: popTxt, y: popTxt.y - 25, alpha: 0, duration: 800, onComplete: cleanPopTxt });
             } else {
-                popTxt.destroy();
+                cleanPopTxt();
             }
 
             if (customer.container && this.tweens && this.tweens.add) {
@@ -1503,6 +1505,10 @@
 
             const topBarY = (height < 600) ? 24 : 30;
             const questY = topBarY + (isSmallScreen ? 55 : 68);
+
+            if (this.lvlUpText && this.lvlUpText.active) {
+                this.lvlUpText.setPosition(width / 2, height / 2);
+            }
 
             if (this.state.tutorial.active && this.state.tutorial.step > 0) {
                 this.renderTutorialBanner(width, questY + 95);
@@ -2820,10 +2826,12 @@
                             fontSize: '14px', style: 'bold', color: mult > 1 ? '#ffd700' : '#00ff00'
                         }).setOrigin(0.5).setDepth(20);
 
+                        const cleanPopOne = () => { if (popOne && popOne.active) popOne.destroy(); };
+                        setTimeout(cleanPopOne, 1100);
                         if (this.tweens && this.tweens.add) {
-                            this.tweens.add({ targets: popOne, y: popOne.y - 30, alpha: 0, duration: 850, onComplete: () => popOne.destroy() });
+                            this.tweens.add({ targets: popOne, y: popOne.y - 30, alpha: 0, duration: 850, onComplete: cleanPopOne });
                         } else {
-                            popOne.destroy();
+                            cleanPopOne();
                         }
                     }
                 } else {
@@ -2859,23 +2867,73 @@
 
         addXP(amount) {
             this.state.xp += amount;
-            const needed = this.state.level * 20;
-            if (this.state.xp >= needed) {
-                this.state.xp -= needed;
+            let leveledUp = false;
+            let gainedPoints = 0;
+            while (this.state.xp >= this.state.level * 20) {
+                this.state.xp -= this.state.level * 20;
                 this.state.level++;
                 this.state.skillPoints = (this.state.skillPoints || 0) + 1;
+                gainedPoints++;
+                leveledUp = true;
+            }
 
-                const lvlText = this.add.text(this.scale.width / 2, this.scale.height / 2, `🎉 LEVEL UP! (Lv. ${this.state.level}) +1 Skill Point! 🎉`, {
-                    fontSize: '22px', style: 'bold', color: '#ffd700', backgroundColor: '#000000', padding: 12
-                }).setOrigin(0.5).setDepth(30);
-
-                if (this.tweens && this.tweens.add) {
-                    this.tweens.add({ targets: lvlText, scale: 1.25, alpha: 0, duration: 1600, onComplete: () => lvlText.destroy() });
-                } else {
-                    lvlText.destroy();
-                }
+            if (leveledUp) {
+                this.showLevelUpNotification(this.state.level, gainedPoints);
             }
             this.updateUI();
+        }
+
+        showLevelUpNotification(level, gainedPoints = 1) {
+            if (this.lvlUpText) {
+                if (this.lvlUpTimeout) {
+                    clearTimeout(this.lvlUpTimeout);
+                    this.lvlUpTimeout = null;
+                }
+                if (this.tweens) {
+                    this.tweens.killTweensOf(this.lvlUpText);
+                }
+                if (this.lvlUpText.destroy) {
+                    this.lvlUpText.destroy();
+                }
+                this.lvlUpText = null;
+            }
+
+            const ptsText = gainedPoints > 1 ? `+${gainedPoints} Skill Points!` : `+1 Skill Point!`;
+            const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
+            const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
+
+            const lvlText = this.add.text(width / 2, height / 2, `🎉 LEVEL UP! (Lv. ${level}) ${ptsText} 🎉`, {
+                fontSize: '22px', style: 'bold', color: '#ffd700', backgroundColor: '#000000', padding: 12
+            }).setOrigin(0.5).setDepth(30);
+
+            this.lvlUpText = lvlText;
+
+            const cleanup = () => {
+                if (this.lvlUpTimeout) {
+                    clearTimeout(this.lvlUpTimeout);
+                    this.lvlUpTimeout = null;
+                }
+                if (this.lvlUpText === lvlText) {
+                    this.lvlUpText = null;
+                }
+                if (lvlText && lvlText.active) {
+                    lvlText.destroy();
+                }
+            };
+
+            this.lvlUpTimeout = setTimeout(cleanup, 1800);
+
+            if (this.tweens && this.tweens.add) {
+                this.tweens.add({
+                    targets: lvlText,
+                    scale: 1.25,
+                    alpha: 0,
+                    duration: 1600,
+                    onComplete: cleanup
+                });
+            } else {
+                cleanup();
+            }
         }
 
         closeModal() {
