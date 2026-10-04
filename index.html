@@ -791,11 +791,14 @@
         repositionCustomerQueue() {
             if (!this.gatePos || !this.customerQueue) return;
             const count = this.customerQueue.length;
-            // Customer 0 stands clearly on the left outside the gate entrance (not inside the gate!)
-            const startX = this.gatePos.x - 48;
-            const minMargin = 16;
+            const isMobile = (this.scale && this.scale.height > this.scale.width && this.scale.width < 600) || (this.scale && this.scale.width < 520);
+
+            // Customer 0 stands on the left outside the gate entrance
+            const gateOffset = isMobile ? 44 : 48;
+            const startX = this.gatePos.x - gateOffset;
+            const minMargin = isMobile ? 12 : 16;
             const availableW = Math.max(60, startX - minMargin);
-            const maxSpacing = 28;
+            const maxSpacing = isMobile ? 24 : 28;
             const spacing = count > 1 ? Math.min(maxSpacing, availableW / (count - 1)) : maxSpacing;
 
             const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
@@ -1503,7 +1506,7 @@
             const isMobile = (height > width && width < 600) || width < 520;
             const isSmallScreen = height < 680;
 
-            const topBarY = (height < 600) ? 24 : 30;
+            const topBarY = isMobile ? 12 : ((height < 600) ? 24 : 30);
             const questY = topBarY + (isSmallScreen ? 55 : 68);
 
             if (this.lvlUpText && this.lvlUpText.active) {
@@ -1511,7 +1514,8 @@
             }
 
             if (this.state.tutorial.active && this.state.tutorial.step > 0) {
-                this.renderTutorialBanner(width, questY + 95);
+                const tutY = isMobile ? 160 : (questY + 95);
+                this.renderTutorialBanner(width, tutY);
             }
 
             // HORIZON LINE (splitY): Moved up by the store's vertical height (44px) from the 50% midpoint
@@ -1534,12 +1538,20 @@
             const streakY = binBaselineY + (isSmallScreen ? 15 : 20);
             const streakX = Math.round(width / 2);
 
-            // GATE ROW: Sits below the streak/bins
-            const bottomY = streakY + (height < 530 ? 24 : (isSmallScreen ? 28 : 36));
-
             // BUS ROAD LANE: Runs along the bottom in its own clear road with visible wheels
             const busY = height - (isSmallScreen ? 32 : 34);
             this.busY = busY;
+
+            // GATE ROW: Sits below the streak/bins
+            let bottomY;
+            if (isMobile) {
+                // Position gate lower on mobile while keeping clear headroom above the bus lane
+                const maxGateY = busY - (isSmallScreen ? 58 : 64);
+                const idealGateY = Math.round(streakY + (busY - streakY) * 0.58);
+                bottomY = Math.min(maxGateY, Math.max(streakY + 44, idealGateY));
+            } else {
+                bottomY = streakY + (height < 530 ? 24 : (isSmallScreen ? 28 : 36));
+            }
 
             if (this.skyGfx) this.skyGfx.destroy();
             if (this.groundGfx) this.groundGfx.destroy();
@@ -1606,8 +1618,8 @@
             const startBinX = Math.round((width - (binSpacing * (activeBinCount - 1))) / 2);
 
             this.renderCenteredXPBar(width, topBarY);
-            this.renderTopHUDBar(width, topBarY, isMobile);
-            this.createTopNavButtons(width);
+            const hudBottomY = this.renderTopHUDBar(width, topBarY, isMobile);
+            this.createTopNavButtons(width, isMobile, hudBottomY);
 
             // 1. WALKING MEADOW CUSTOMERS (Above dirt, up to 3 in line)
             this.renderMeadowShopLine(width, splitY);
@@ -1806,12 +1818,14 @@
             this.dumpsterBarGfx = this.add.graphics().setDepth(15);
             this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
-            // 5. GATE (Direct Intake onto Conveyor Belt, positioned with ample room to the left for queueing customers)
-            const gateX = isMobile ? Math.max(175, Math.round(width * 0.36)) : Math.max(235, Math.round(width * 0.30));
+            // 5. GATE (Direct Intake onto Conveyor Belt)
+            // On mobile, position gate in the middle/slightly right-of-center so the queue of customers has ample room on the left
+            const gateX = isMobile ? Math.round(width * 0.52) : Math.max(235, Math.round(width * 0.30));
             this.gatePos = { x: gateX, y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
-            this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - 36, 'GATE [SPACE]', { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            const gateLabel = isMobile ? 'GATE' : 'GATE [SPACE]';
+            this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - 36, gateLabel, { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
 
             this.autoGateGfx = this.add.graphics();
             this.autoSortGfx = this.add.graphics().setDepth(25);
@@ -1929,7 +1943,11 @@
                 this.tutorialIndicatorsGfx.strokeCircle(this.gatePos.x, this.gatePos.y, 40);
             } else if (step === 4) {
                 if (this.btnUpgrades) {
-                    this.tutorialIndicatorsGfx.strokeRect(this.btnUpgrades.x - 110, this.btnUpgrades.y - 2, 115, 28);
+                    if (this.btnUpgrades.originX === 0.5) {
+                        this.tutorialIndicatorsGfx.strokeRoundedRect(this.btnUpgrades.x - 50, this.btnUpgrades.y - 13, 100, 26, 6);
+                    } else {
+                        this.tutorialIndicatorsGfx.strokeRect(this.btnUpgrades.x - 110, this.btnUpgrades.y - 2, 115, 28);
+                    }
                 }
             }
         }
@@ -2360,11 +2378,11 @@
         }
 
         renderTopHUDBar(w, topBarY, isMobile) {
-            const cardX = 20;
-            const cardY = isMobile ? topBarY + 20 : 28;
+            const cardX = isMobile ? 12 : 20;
+            const cardY = isMobile ? (topBarY + 18 + 8) : 28;
             const cardW = isMobile ? (w - 24) : 265;
             const hasExtraTypes = (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric);
-            const cardH = hasExtraTypes ? 74 : 60;
+            const cardH = hasExtraTypes ? (isMobile ? 74 : 74) : (isMobile ? 58 : 60);
 
             const cardBg = this.add.graphics();
             // Solid dark charcoal background for maximum contrast against blue sky
@@ -2392,6 +2410,7 @@
             });
 
             this.mainContainer.add([cardBg, this.hudTextObj]);
+            return cardY + cardH;
         }
 
         drawAutoGateProgress(progress) {
@@ -2499,22 +2518,65 @@
             if (this.longPressGfx) this.longPressGfx.clear();
         }
 
-        createTopNavButtons(w) {
-            const btnDecor = this.add.text(w - 20, 26, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
-                .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
-
+        createTopNavButtons(w, isMobile = false, hudBottomY = 90) {
             const hasAnyAfford = this.hasCategoryAffordable('gate') || this.hasCategoryAffordable('conveyor') || this.hasCategoryAffordable('skills');
-            this.btnUpgrades = this.add.text(w - 20, 56, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
-                .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
+
+            if (isMobile) {
+                const totalMargin = 24;
+                const gap = 6;
+                const btnW = Math.floor((w - totalMargin - (2 * gap)) / 3);
+                const btnH = 26;
+                const navY = hudBottomY + 6;
+
+                const makeMobileNavBtn = (centerX, label, color, onClick) => {
+                    const btnGfx = this.add.graphics();
+                    btnGfx.fillStyle(0x1e293b, 0.95);
+                    btnGfx.fillRoundedRect(centerX - (btnW / 2), navY, btnW, btnH, 6);
+                    btnGfx.lineStyle(1.5, 0x475569, 1);
+                    btnGfx.strokeRoundedRect(centerX - (btnW / 2), navY, btnW, btnH, 6);
+
+                    const txt = this.add.text(centerX, navY + (btnH / 2), label, {
+                        fontSize: (w < 380) ? '9.5px' : '10.5px',
+                        style: 'bold',
+                        color: color
+                    }).setOrigin(0.5);
+
+                    const hitZone = this.add.zone(centerX, navY + (btnH / 2), btnW, btnH)
+                        .setInteractive({ useHandCursor: true });
+                    hitZone.on('pointerup', onClick);
+
+                    this.mainContainer.add([btnGfx, txt, hitZone]);
+                    return { txt, hitZone, btnGfx };
+                };
+
+                const x1 = Math.round(12 + (btnW / 2));
+                const x2 = Math.round(w / 2);
+                const x3 = Math.round(w - 12 - (btnW / 2));
+
+                makeMobileNavBtn(x1, '🪴 DECOR', '#a5d6a7', () => this.openModal('decorations'));
+
+                const upgObj = makeMobileNavBtn(x2, hasAnyAfford ? '🛠️ UPGRADE!' : '🛠️ UPGRADES', '#4fc3f7', () => {
                     this.openModal('upgrades', 'gate');
                 });
+                this.btnUpgrades = upgObj.txt;
 
-            const btnArcade = this.add.text(w - 20, 86, '🕹️ ARCADE', { fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
-                .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
-                    this.openArcadeModal();
-                });
+                makeMobileNavBtn(x3, '🕹️ ARCADE', '#ffeb3b', () => this.openArcadeModal());
+            } else {
+                const btnDecor = this.add.text(w - 20, 26, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                    .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
 
-            this.mainContainer.add([btnDecor, this.btnUpgrades, btnArcade]);
+                this.btnUpgrades = this.add.text(w - 20, 56, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                    .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                        this.openModal('upgrades', 'gate');
+                    });
+
+                const btnArcade = this.add.text(w - 20, 86, '🕹️ ARCADE', { fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                    .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
+                        this.openArcadeModal();
+                    });
+
+                this.mainContainer.add([btnDecor, this.btnUpgrades, btnArcade]);
+            }
         }
 
         createItemGraphic(typeId, itemName, forcedMultiplier = 1, fixedSpriteKey = null) {
