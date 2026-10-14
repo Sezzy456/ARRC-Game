@@ -48,12 +48,29 @@ const htmlContent = `<!DOCTYPE html>
             errDiv = document.createElement('div');
             errDiv.id = 'game-err-banner';
             errDiv.style.position = 'fixed'; errDiv.style.top = '10px'; errDiv.style.left = '10px'; errDiv.style.right = '10px';
-            errDiv.style.backgroundColor = 'rgba(211, 47, 47, 0.95)'; errDiv.style.color = '#ffffff'; errDiv.style.padding = '14px';
+            errDiv.style.backgroundColor = 'rgba(211, 47, 47, 0.95)'; errDiv.style.color = '#ffffff'; errDiv.style.padding = '14px 44px 14px 14px';
             errDiv.style.fontFamily = "'Outfit', sans-serif"; errDiv.style.zIndex = '999999'; errDiv.style.fontSize = '13px';
             errDiv.style.borderRadius = '8px'; errDiv.style.boxShadow = '0 4px 16px rgba(0,0,0,0.6)';
+            
+            var closeBtn = document.createElement('button');
+            closeBtn.id = 'game-err-close-btn';
+            closeBtn.innerHTML = '✕';
+            closeBtn.style.position = 'absolute'; closeBtn.style.top = '10px'; closeBtn.style.right = '12px';
+            closeBtn.style.background = 'rgba(0,0,0,0.35)'; closeBtn.style.border = 'none'; closeBtn.style.color = '#fff';
+            closeBtn.style.fontSize = '16px'; closeBtn.style.cursor = 'pointer'; closeBtn.style.borderRadius = '4px';
+            closeBtn.style.width = '28px'; closeBtn.style.height = '28px'; closeBtn.style.lineHeight = '28px';
+            closeBtn.style.textAlign = 'center';
+            closeBtn.onclick = function() { errDiv.style.display = 'none'; };
+            errDiv.appendChild(closeBtn);
+
+            var contentDiv = document.createElement('div');
+            contentDiv.id = 'game-err-content';
+            errDiv.appendChild(contentDiv);
             document.body.appendChild(errDiv);
         }
-        errDiv.innerHTML = '<b>⚠️ GAME ERROR:</b><br>' + msg + '<br>Line: ' + lineNo + ' Col: ' + columnNo + (error && error.stack ? '<br><pre>' + error.stack + '</pre>' : '');
+        errDiv.style.display = 'block';
+        var contentDiv = document.getElementById('game-err-content') || errDiv;
+        contentDiv.innerHTML = '<b>⚠️ GAME ERROR:</b><br>' + msg + '<br>Line: ' + lineNo + ' Col: ' + columnNo + (error && error.stack ? '<br><pre style="max-height:180px;overflow:auto;margin:6px 0 0 0;">' + error.stack + '</pre>' : '');
         return false;
     };
 
@@ -125,6 +142,21 @@ const htmlContent = `<!DOCTYPE html>
         }
     };
 
+    const FACTORY_RECIPES = [
+        { name: '🌱 Fertilizer', key: 'fertilizer', icon: '🌱', req: '5 🟢', costVal: 5, resKey: 'organic', binId: 'organic', tier: 1, sellPrice: 40, xpReward: 45 },
+        { name: '🛢️ Biofuel', key: 'biofuel', icon: '🛢️', req: '10 🟢', costVal: 10, resKey: 'organic', binId: 'organic', tier: 2, sellPrice: 90, xpReward: 100 },
+        { name: '🍂 Compost', key: 'compost', icon: '🍂', req: '15 🟢', costVal: 15, resKey: 'organic', binId: 'organic', tier: 3, sellPrice: 150, xpReward: 160 },
+        { name: '📄 Rec.Paper', key: 'recycled_paper', icon: '📄', req: '5 🔵', costVal: 5, resKey: 'paper', binId: 'paper', tier: 1, sellPrice: 40, xpReward: 45 },
+        { name: '📦 Cardboard', key: 'cardboard', icon: '📦', req: '10 🔵', costVal: 10, resKey: 'paper', binId: 'paper', tier: 2, sellPrice: 90, xpReward: 100 },
+        { name: '📓 Notebook', key: 'notebook', icon: '📓', req: '15 🔵', costVal: 15, resKey: 'paper', binId: 'paper', tier: 3, sellPrice: 150, xpReward: 160 },
+        { name: '🏺 Glass Vase', key: 'glass_vase', icon: '🏺', req: '5 🟣', costVal: 5, resKey: 'glass', binId: 'glass', tier: 1, sellPrice: 40, xpReward: 45 },
+        { name: '🪞 Mirror', key: 'mirror', icon: '🪞', req: '10 🟣', costVal: 10, resKey: 'glass', binId: 'glass', tier: 2, sellPrice: 90, xpReward: 100 },
+        { name: '🔍 Lens', key: 'lens', icon: '🔍', req: '15 🟣', costVal: 15, resKey: 'glass', binId: 'glass', tier: 3, sellPrice: 150, xpReward: 160 },
+        { name: '🧵 Filament', key: 'filament', icon: '🧵', req: '5 🟡', costVal: 5, resKey: 'plastic', binId: 'plastic', tier: 1, sellPrice: 40, xpReward: 45 },
+        { name: '🧱 Brick', key: 'plastic_brick', icon: '🧱', req: '10 🟡', costVal: 10, resKey: 'plastic', binId: 'plastic', tier: 2, sellPrice: 90, xpReward: 100 },
+        { name: '🧪 Pipe', key: 'pipe', icon: '🧪', req: '15 🟡', costVal: 15, resKey: 'plastic', binId: 'plastic', tier: 3, sellPrice: 150, xpReward: 160 }
+    ];
+
     class MainScene extends Phaser.Scene {
         constructor() { super({ key: 'MainScene' }); }
 
@@ -164,19 +196,22 @@ const htmlContent = `<!DOCTYPE html>
                 excessTrashCount: 0,
                 factoryUnlocked: false,
 
-                // Automation Timers
+                // Automation Timers & Pauses
                 isGateAuto: false,
                 autoGateSpeed: 5000,
                 autoGateTimer: 0,
+                autoGatePaused: false,
                 unlockedAutoSort: false,
                 autoSortDelay: 8000,
                 autoSortTimer: 0,
                 autoSortPaused: false,
+                busRushPaused: false,
 
-                // Sanitiser Station Stats
+                // Sanitiser Station Stats (5s cooldown)
                 unlockedSanitiser: false,
                 sanitiserCooldown: 0,
-                sanitiserMaxCooldown: 2500,
+                sanitiserMaxCooldown: 5000,
+                petCooldowns: {},
 
                 // Pet Queue Helpers
                 pets: {
@@ -263,7 +298,11 @@ const htmlContent = `<!DOCTYPE html>
                 // Color Tokens & Crafted Items
                 resources: { organic: 0, paper: 0, glass: 0, plastic: 0, metal: 0, fabric: 0 },
                 crafted: {
-                    fertilizer: 0, paper_bundle: 0, plastic_pellets: 0, crushed_cullet: 0
+                    fertilizer: 0, biofuel: 0, compost: 0,
+                    recycled_paper: 0, cardboard: 0, notebook: 0,
+                    glass_vase: 0, mirror: 0, lens: 0,
+                    filament: 0, plastic_brick: 0, pipe: 0,
+                    paper_bundle: 0, plastic_pellets: 0, crushed_cullet: 0
                 },
 
                 // Arcade Challenges Highscores
@@ -276,6 +315,8 @@ const htmlContent = `<!DOCTYPE html>
             this.shopCustomers = []; // Up to 3 walking meadow customers
             this.currentCustomer = null;
             this.customerCooldown = 0;
+            this.craftingConveyor = [];
+            this.currentCraftJob = null;
             this.activeModal = null;
             this.activeUpgradeCategory = 'gate';
             this.binsSubmenuOpen = true;
@@ -288,6 +329,7 @@ const htmlContent = `<!DOCTYPE html>
             this.pulsePhase = false;
 
             this.clouds = [];
+            this.activeBuses = [];
             this.activeBusContainer = null;
             this.arcadeState = {
                 active: false,
@@ -469,7 +511,14 @@ const htmlContent = `<!DOCTYPE html>
                     if (this.state.sanitiserCooldown > 0) {
                         this.state.sanitiserCooldown = Math.max(0, this.state.sanitiserCooldown - 1000);
                     }
-                    this.updateSanitiserBtnUI();
+                    if (this.state.petCooldowns) {
+                        Object.keys(this.state.petCooldowns).forEach(k => {
+                            if (this.state.petCooldowns[k] > 0) {
+                                this.state.petCooldowns[k] = Math.max(0, this.state.petCooldowns[k] - 1000);
+                            }
+                        });
+                    }
+                    this.updateToolbarCooldownsUI();
                     this.updateUI();
                 },
                 loop: true
@@ -500,9 +549,9 @@ const htmlContent = `<!DOCTYPE html>
                     }
                 } else if (e.code === 'Space') {
                     this.triggerGate();
-                } else if (e.code === 'KeyV') {
+                } else if (e.code === 'KeyV' || e.key === 'v' || e.key === 'V') {
                     this.triggerSanitiseAction();
-                } else if (e.code === 'KeyB') {
+                } else if (e.code === 'KeyB' || e.key === 'b' || e.key === 'B') {
                     this.cashInActiveBus();
                 }
             });
@@ -630,7 +679,7 @@ const htmlContent = `<!DOCTYPE html>
         scheduleBusRush() {
             const delay = this.state.busRushInterval || 25000;
             this.time.delayedCall(delay, () => {
-                if (this.state.busRushUnlocked && Math.random() < 0.65) {
+                if (this.state.busRushUnlocked && !this.state.busRushPaused && Math.random() < 0.65) {
                     this.triggerBusRushEvent();
                 }
                 this.scheduleBusRush();
@@ -682,8 +731,8 @@ const htmlContent = `<!DOCTYPE html>
                 }
             }
 
-            // 2. Auto-Gate System
-            if (this.state.isGateAuto) {
+            // 2. Auto-Gate System (Checks autoGatePaused toggle)
+            if (this.state.isGateAuto && !this.state.autoGatePaused) {
                 this.state.autoGateTimer = (this.state.autoGateTimer || 0) + dt;
                 while (this.state.autoGateTimer >= this.state.autoGateSpeed && this.customerQueue.length > 0) {
                     this.state.autoGateTimer -= this.state.autoGateSpeed;
@@ -729,11 +778,18 @@ const htmlContent = `<!DOCTYPE html>
             }
             this.renderDumpsterFireBar();
 
-            // 5. Sanitiser Station Cooldown
+            // 5. Queue Abilities Cooldown (Sanitiser & Pet Sweeps)
             if (this.state.sanitiserCooldown > 0) {
                 this.state.sanitiserCooldown = Math.max(0, this.state.sanitiserCooldown - dt);
-                this.updateSanitiserBtnUI();
             }
+            if (this.state.petCooldowns) {
+                Object.keys(this.state.petCooldowns).forEach(k => {
+                    if (this.state.petCooldowns[k] > 0) {
+                        this.state.petCooldowns[k] = Math.max(0, this.state.petCooldowns[k] - dt);
+                    }
+                });
+            }
+            this.updateToolbarCooldownsUI();
 
             // 6. Meadow Shop Customer Replenishment (Up to 3 in line above horizon)
             this.shopCustTimer = (this.shopCustTimer || 0) + dt;
@@ -968,36 +1024,37 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         updateSanitiserBtnUI() {
-            if (!this.sanitiserContainer || !this.sanitiserBgGfx || !this.sanitiserBgGfx.scene) return;
-            const maxCd = this.state.sanitiserMaxCooldown || 2500;
-            const cd = this.state.sanitiserCooldown || 0;
-            const pct = Math.min(1, Math.max(0, 1 - (cd / maxCd)));
-            const btnSize = 30;
+            this.updateToolbarCooldownsUI();
+        }
 
-            if (this.sanitiserFillGfx) {
-                this.sanitiserFillGfx.clear();
-                if (pct < 1) {
-                    this.sanitiserFillGfx.fillStyle(0x000000, 0.55);
-                    const cdH = Math.round(btnSize * (1 - pct));
-                    this.sanitiserFillGfx.fillRoundedRect(0, btnSize - cdH, btnSize, cdH, 6);
-                }
-            }
+        updateToolbarCooldownsUI() {
+            if (!this.activeToolbarButtons || this.activeToolbarButtons.length === 0) return;
+            const maxCd = 5000;
+            this.activeToolbarButtons.forEach(act => {
+                if (!act.fillGfx || !act.bgGfx || !act.fillGfx.scene) return;
+                const cd = act.type === 'sanitiser' ? (this.state.sanitiserCooldown || 0) : ((this.state.petCooldowns && this.state.petCooldowns[act.targetType]) || 0);
+                const btnSize = act.btnSize || 28;
+                act.fillGfx.clear();
+                act.bgGfx.clear();
+                act.bgGfx.fillStyle(0x1e293b, 0.95);
+                act.bgGfx.fillRoundedRect(0, 0, btnSize, btnSize, 6);
 
-            if (this.sanitiserBgGfx) {
-                this.sanitiserBgGfx.clear();
-                this.sanitiserBgGfx.fillStyle(0x1e293b, 0.95);
-                this.sanitiserBgGfx.fillRoundedRect(0, 0, btnSize, btnSize, 6);
-                if (pct >= 1) {
-                    this.sanitiserBgGfx.lineStyle(2, 0x00e676, 1);
+                if (cd > 0) {
+                    const pct = Math.min(1, Math.max(0, cd / maxCd));
+                    const cdH = Math.round(pct * btnSize);
+                    act.fillGfx.fillStyle(0x000000, 0.65);
+                    act.fillGfx.fillRoundedRect(0, btnSize - cdH, btnSize, cdH, 6);
+                    act.bgGfx.lineStyle(1.5, 0x475569, 0.6);
+                    act.bgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
                 } else {
-                    this.sanitiserBgGfx.lineStyle(1.5, 0x475569, 0.7);
+                    act.bgGfx.lineStyle(2, 0x00e676, 1);
+                    act.bgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
                 }
-                this.sanitiserBgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
-            }
+            });
         }
 
         triggerSanitiseAction() {
-            if (!this.state.unlockedSanitiser || this.state.sanitiserCooldown > 0 || this.trashQueue.length === 0) return;
+            if (!this.state.unlockedSanitiser || (this.state.sanitiserCooldown || 0) > 0 || this.trashQueue.length === 0) return;
             const headItem = this.trashQueue[0];
             const currentMult = headItem.multiplier || 1;
 
@@ -1014,14 +1071,16 @@ const htmlContent = `<!DOCTYPE html>
                 headItem.container = newContainer;
                 if (this.mainContainer) this.mainContainer.add(newContainer);
 
-                this.state.sanitiserMaxCooldown = 2500;
-                this.state.sanitiserCooldown = 2500;
-                this.updateSanitiserBtnUI();
+                this.state.sanitiserMaxCooldown = 5000;
+                this.state.sanitiserCooldown = 5000;
+                this.updateToolbarCooldownsUI();
                 this.renderHorizontalQueue();
             }
         }
 
         triggerPetClean(typeId, petName) {
+            if (!this.state.petCooldowns) this.state.petCooldowns = {};
+            if ((this.state.petCooldowns[typeId] || 0) > 0) return;
             if (this.trashQueue.length === 0) return;
             const matchingIndices = [];
             this.trashQueue.forEach((item, idx) => {
@@ -1040,6 +1099,10 @@ const htmlContent = `<!DOCTYPE html>
 
             this.state.resources[typeId] += totalTokens;
             this.addXP(totalTokens);
+
+            // Trigger 5-second ability cooldown for this pet helper
+            this.state.petCooldowns[typeId] = 5000;
+            this.updateToolbarCooldownsUI();
 
             const targetBin = this.bins.find(b => b.id === typeId);
             const popX = targetBin ? targetBin.x : (this.scale.width / 2);
@@ -1063,9 +1126,16 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         cashInActiveBus() {
-            if (this.activeBusContainer && this.activeBusContainer.active && this.activeBusContainer.cashInHandler) {
-                this.activeBusContainer.cashInHandler();
+            if (!this.activeBuses) this.activeBuses = [];
+            if (this.activeBusContainer && !this.activeBuses.includes(this.activeBusContainer)) {
+                this.activeBuses.push(this.activeBusContainer);
             }
+            const validBuses = this.activeBuses.filter(b => b && b.active && b.cashInHandler && !b.isCashedIn);
+            if (validBuses.length === 0) return;
+            // Front bus is the one furthest along the screen (highest x position travelling rightward)
+            validBuses.sort((a, b) => b.x - a.x);
+            const frontBus = validBuses[0];
+            frontBus.cashInHandler();
         }
 
         requestLayoutRebuild() {
@@ -1097,12 +1167,18 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         triggerBusRushEvent() {
-            if (this.activeBusContainer && this.activeBusContainer.active) return;
+            if (this.state.busRushPaused) return;
+            if (!this.activeBuses) this.activeBuses = [];
+            // Cap at 3 concurrent buses
+            const activeCount = this.activeBuses.filter(b => b && b.active && !b.isCashedIn).length;
+            if (activeCount >= 3) return;
+
             const w = this.scale.width;
             const y = this.busY || (this.scale.height - 40);
 
             const busContainer = this.add.container(-140, y).setDepth(200);
             this.activeBusContainer = busContainer;
+            this.activeBuses.push(busContainer);
             
             const busGfx = this.add.graphics();
             busGfx.fillStyle(0xff6f00, 1);
@@ -1137,8 +1213,9 @@ const htmlContent = `<!DOCTYPE html>
             let busClicked = false;
 
             const handleCashIn = () => {
-                if (busClicked) return;
+                if (busClicked || busContainer.isCashedIn) return;
                 busClicked = true;
+                busContainer.isCashedIn = true;
 
                 for (let i = 0; i < 10; i++) {
                     this.addTrashToConveyor();
@@ -1148,6 +1225,15 @@ const htmlContent = `<!DOCTYPE html>
                 const floatTxt = this.add.text(busContainer.x, busContainer.y - 20, '🚌 +10 RUBBISH ON CONVEYOR! 🚌', {
                     fontSize: '15px', style: 'bold', color: '#ff9800', backgroundColor: '#000000', padding: 6
                 }).setOrigin(0.5).setDepth(230);
+
+                const removeBus = () => {
+                    if (busContainer && busContainer.destroy) busContainer.destroy();
+                    const rIdx = this.activeBuses.indexOf(busContainer);
+                    if (rIdx !== -1) this.activeBuses.splice(rIdx, 1);
+                    if (this.activeBusContainer === busContainer) {
+                        this.activeBusContainer = this.activeBuses[0] || null;
+                    }
+                };
 
                 if (this.tweens && this.tweens.add) {
                     this.tweens.add({
@@ -1163,15 +1249,11 @@ const htmlContent = `<!DOCTYPE html>
                         scale: 0.2,
                         alpha: 0,
                         duration: 250,
-                        onComplete: () => {
-                            busContainer.destroy();
-                            this.activeBusContainer = null;
-                        }
+                        onComplete: removeBus
                     });
                 } else {
                     floatTxt.destroy();
-                    busContainer.destroy();
-                    this.activeBusContainer = null;
+                    removeBus();
                 }
             };
 
@@ -1187,7 +1269,11 @@ const htmlContent = `<!DOCTYPE html>
                     duration: 12500,
                     onComplete: () => {
                         if (busContainer && busContainer.active) busContainer.destroy();
-                        this.activeBusContainer = null;
+                        const rIdx = this.activeBuses.indexOf(busContainer);
+                        if (rIdx !== -1) this.activeBuses.splice(rIdx, 1);
+                        if (this.activeBusContainer === busContainer) {
+                            this.activeBusContainer = this.activeBuses[0] || null;
+                        }
                     }
                 });
             }
@@ -1196,6 +1282,9 @@ const htmlContent = `<!DOCTYPE html>
         getCurrentBuyerTokens(customer) {
             if (!customer || !customer.order) return 0;
             const o = customer.order;
+            if (o.isCraftedItem) {
+                return (this.state.crafted && this.state.crafted[o.itemKey]) || 0;
+            }
             if (o.isRecipe) {
                 const reqTokens = o.costTokens || {};
                 const key = Object.keys(reqTokens)[0];
@@ -1205,36 +1294,77 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         generateBuyerOrderData() {
-            const unlockedRecipeKeys = [];
-            if (this.state.unlockedRecipes) {
-                Object.keys(this.state.unlockedRecipes).forEach(rKey => {
-                    if (this.state.unlockedRecipes[rKey]) unlockedRecipeKeys.push(rKey);
-                });
+            const completed = this.state.totalQuestsCompleted || 0;
+
+            const tier1FactoryItems = [
+                { name: '🌱 Fertilizer', key: 'fertilizer', icon: '🌱', sellPrice: 40, xpReward: 45 },
+                { name: '📄 Rec.Paper', key: 'recycled_paper', icon: '📄', sellPrice: 40, xpReward: 45 },
+                { name: '🏺 Glass Vase', key: 'glass_vase', icon: '🏺', sellPrice: 40, xpReward: 45 },
+                { name: '🧵 Filament', key: 'filament', icon: '🧵', sellPrice: 40, xpReward: 45 }
+            ];
+
+            const tier2And3FactoryItems = [
+                { name: '🛢️ Biofuel', key: 'biofuel', icon: '🛢️', sellPrice: 90, xpReward: 100 },
+                { name: '🍂 Compost', key: 'compost', icon: '🍂', sellPrice: 150, xpReward: 160 },
+                { name: '📦 Cardboard', key: 'cardboard', icon: '📦', sellPrice: 90, xpReward: 100 },
+                { name: '📓 Notebook', key: 'notebook', icon: '📓', sellPrice: 150, xpReward: 160 },
+                { name: '🪞 Mirror', key: 'mirror', icon: '🪞', sellPrice: 90, xpReward: 100 },
+                { name: '🔍 Lens', key: 'lens', icon: '🔍', sellPrice: 150, xpReward: 160 },
+                { name: '🧱 Brick', key: 'plastic_brick', icon: '🧱', sellPrice: 90, xpReward: 100 },
+                { name: '🧪 Pipe', key: 'pipe', icon: '🧪', sellPrice: 150, xpReward: 160 }
+            ];
+
+            let shouldOrderCrafted = false;
+            let chosenItem = null;
+
+            if (completed >= 20) {
+                // After 20 orders: 60% chance for factory items (tier 2/3 expensive items), 40% for large token batches (10-16 tokens)
+                if (Math.random() < 0.60) {
+                    shouldOrderCrafted = true;
+                    if (Math.random() < 0.55) {
+                        chosenItem = tier2And3FactoryItems[Math.floor(Math.random() * tier2And3FactoryItems.length)];
+                    } else {
+                        chosenItem = tier1FactoryItems[Math.floor(Math.random() * tier1FactoryItems.length)];
+                    }
+                }
+            } else if (completed >= 10) {
+                // After 10 orders: 45% chance for tier 1 factory items, 55% for 4-8 tokens
+                if (Math.random() < 0.45) {
+                    shouldOrderCrafted = true;
+                    chosenItem = tier1FactoryItems[Math.floor(Math.random() * tier1FactoryItems.length)];
+                }
             }
 
-            const wantRecipe = (unlockedRecipeKeys.length > 0) && (Math.random() < 0.35);
-
-            if (wantRecipe) {
-                const rKey = unlockedRecipeKeys[Math.floor(Math.random() * unlockedRecipeKeys.length)];
-                const rData = RECIPES_DATA[rKey];
+            if (shouldOrderCrafted && chosenItem) {
+                const qty = 1;
                 return {
-                    isRecipe: true,
-                    itemKey: rKey,
-                    itemName: rData.name,
-                    icon: '🌱',
-                    qty: 1,
-                    costTokens: rData.costTokens,
-                    rewardCash: rData.sellPrice,
-                    rewardXP: rData.xpReward
+                    isCraftedItem: true,
+                    isRecipe: false,
+                    itemKey: chosenItem.key,
+                    itemName: chosenItem.name,
+                    icon: chosenItem.icon,
+                    qty: qty,
+                    rewardCash: chosenItem.sellPrice,
+                    rewardXP: chosenItem.xpReward
                 };
             }
 
             const activeKeys = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]);
             const typeKey = (activeKeys.length > 0) ? activeKeys[Math.floor(Math.random() * activeKeys.length)] : 'organic';
-            const typeData = TRASH_TYPES[typeKey];
-            const qty = Phaser.Math.Between(2, 4);
-            const cash = (qty * 5) + Phaser.Math.Between(2, 6);
-            const xp = (qty * 8) + 6;
+            const typeData = TRASH_TYPES[typeKey] || { name: 'Organic' };
+
+            let qty;
+            if (completed >= 20) {
+                // Large token orders (10-16 tokens)
+                qty = Phaser.Math.Between(10, 16);
+            } else if (completed >= 10) {
+                qty = Phaser.Math.Between(4, 8);
+            } else {
+                qty = Phaser.Math.Between(2, 4);
+            }
+
+            const cash = Math.round((qty * 5.5) + Phaser.Math.Between(3, 8));
+            const xp = Math.round((qty * 8) + 6);
 
             const icons = {
                 organic: '🟢',
@@ -1246,6 +1376,7 @@ const htmlContent = `<!DOCTYPE html>
             };
 
             return {
+                isCraftedItem: false,
                 isRecipe: false,
                 itemKey: typeKey,
                 itemName: typeData.name,
@@ -1264,32 +1395,34 @@ const htmlContent = `<!DOCTYPE html>
 
             const bubbleGfx = this.add.graphics();
             bubbleGfx.fillStyle(0x0f172a, 0.95);
-            bubbleGfx.fillRoundedRect(-38, -70, 76, 46, 5);
+            bubbleGfx.fillRoundedRect(-38, -68, 76, 46, 5);
             bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
-            bubbleGfx.strokeRoundedRect(-38, -70, 76, 46, 5);
+            bubbleGfx.strokeRoundedRect(-38, -68, 76, 46, 5);
             bubbleGfx.fillStyle(0x0f172a, 0.95);
-            bubbleGfx.fillTriangle(-4, -24, 4, -24, 0, -19);
+            bubbleGfx.fillTriangle(-4, -22, 4, -22, 0, -17);
             bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
-            bubbleGfx.lineBetween(-4, -24, 0, -19);
-            bubbleGfx.lineBetween(0, -19, 4, -24);
+            bubbleGfx.lineBetween(-4, -22, 0, -17);
+            bubbleGfx.lineBetween(0, -17, 4, -22);
 
-            const orderTxt = this.add.text(0, -62, customer.order.icon + ' x' + customer.order.qty + ' (+$' + customer.order.rewardCash + ')', {
-                fontSize: '9.5px', style: 'bold', color: '#ffca28'
+            // Top line: Item icon + amount requested in larger font
+            const orderTxt = this.add.text(0, -56, customer.order.icon + ' x' + customer.order.qty, {
+                fontSize: '12px', style: 'bold', color: '#ffca28'
             }).setOrigin(0.5);
 
-            const stockTxt = this.add.text(0, -50, 'Have: ' + haveTokens + '/' + customer.order.qty, {
-                fontSize: '8.5px', style: 'bold', color: canAfford ? '#4ade80' : '#f87171'
+            // Second line: Amount they'll pay below it
+            const rewardTxt = this.add.text(0, -42, '+$' + customer.order.rewardCash, {
+                fontSize: '10px', style: 'bold', color: '#4ade80'
             }).setOrigin(0.5);
 
-            // Accept button on LEFT (-17), Reject button on RIGHT (+17)
-            const btnAccept = this.add.text(-17, -35, '✓', {
+            // Action buttons: Tick on left (-16), Cross on right (+16)
+            const btnAccept = this.add.text(-16, -28, '✓', {
                 fontSize: '11px', style: 'bold',
                 backgroundColor: canAfford ? '#15803d' : '#334155',
                 color: canAfford ? '#ffffff' : '#9ca3af',
-                padding: { x: 6, y: 1 }
+                padding: { x: 5, y: 1 }
             }).setOrigin(0.5);
 
-            const btnReject = this.add.text(17, -35, '✕', {
+            const btnReject = this.add.text(16, -28, '✕', {
                 fontSize: '11px', style: 'bold',
                 backgroundColor: '#b91c1c',
                 color: '#ffffff',
@@ -1304,13 +1437,13 @@ const htmlContent = `<!DOCTYPE html>
             btnReject.on('pointerup', () => this.rejectBuyerOrder(customer));
 
             const custContainer = this.add.container(startX, walkY, [
-                person, bubbleGfx, orderTxt, stockTxt, btnAccept, btnReject
+                person, bubbleGfx, orderTxt, rewardTxt, btnAccept, btnReject
             ]).setDepth(15);
 
             customer.container = custContainer;
             customer.bubbleGfx = bubbleGfx;
             customer.orderTxt = orderTxt;
-            customer.stockTxt = stockTxt;
+            customer.rewardTxt = rewardTxt;
             customer.btnAccept = btnAccept;
             customer.btnReject = btnReject;
 
@@ -1327,22 +1460,25 @@ const htmlContent = `<!DOCTYPE html>
                 const reqTokens = cust.order.qty;
                 const canAfford = haveTokens >= reqTokens;
 
-                if (cust.stockTxt) {
-                    cust.stockTxt.setText('Have: ' + haveTokens + '/' + reqTokens);
-                    cust.stockTxt.setColor(canAfford ? '#4ade80' : '#f87171');
+                if (cust.orderTxt) {
+                    cust.orderTxt.setText(cust.order.icon + ' x' + cust.order.qty);
+                }
+
+                if (cust.rewardTxt) {
+                    cust.rewardTxt.setText('+$' + cust.order.rewardCash);
                 }
 
                 if (cust.bubbleGfx) {
                     cust.bubbleGfx.clear();
                     cust.bubbleGfx.fillStyle(0x0f172a, 0.95);
-                    cust.bubbleGfx.fillRoundedRect(-38, -70, 76, 46, 5);
+                    cust.bubbleGfx.fillRoundedRect(-38, -68, 76, 46, 5);
                     cust.bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
-                    cust.bubbleGfx.strokeRoundedRect(-38, -70, 76, 46, 5);
+                    cust.bubbleGfx.strokeRoundedRect(-38, -68, 76, 46, 5);
                     cust.bubbleGfx.fillStyle(0x0f172a, 0.95);
-                    cust.bubbleGfx.fillTriangle(-4, -24, 4, -24, 0, -19);
+                    cust.bubbleGfx.fillTriangle(-4, -22, 4, -22, 0, -17);
                     cust.bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
-                    cust.bubbleGfx.lineBetween(-4, -24, 0, -19);
-                    cust.bubbleGfx.lineBetween(0, -19, 4, -24);
+                    cust.bubbleGfx.lineBetween(-4, -22, 0, -17);
+                    cust.bubbleGfx.lineBetween(0, -17, 4, -22);
                 }
 
                 if (cust.btnAccept) {
@@ -1364,23 +1500,23 @@ const htmlContent = `<!DOCTYPE html>
             const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
             const isMobile = (height > width && width < 600) || width < 560;
 
-            const bw = isMobile ? (width < 380 ? 46 : 50) : 54;
-            const bh = isMobile ? 42 : 44;
+            const bw = isMobile ? (width < 380 ? 54 : 60) : 72;
+            const bh = isMobile ? 48 : 56;
 
             if (isMobile) {
                 // On mobile, the customers, store, and factory share the horizontal space across the screen
-                const rightMargin = 10;
+                const rightMargin = 8;
                 const buildingGap = 8;
                 const factoryX = Math.round(width - rightMargin - (bw / 2));
                 const storeX = Math.round(factoryX - bw - buildingGap);
 
                 const storeLeft = storeX - (bw / 2);
-                const leftMargin = 10;
+                const leftMargin = 8;
                 const queueW = storeLeft - leftMargin;
 
                 // 3 slots (0, 1, 2) distributed across the left horizontal space
-                const slotSpacing = Math.min(84, Math.max(62, Math.floor((queueW - 38) / 2)));
-                const cust0X = Math.round(storeLeft - 34);
+                const slotSpacing = Math.min(84, Math.max(60, Math.floor((queueW - 36) / 2)));
+                const cust0X = Math.round(storeLeft - 32);
 
                 return {
                     bw, bh,
@@ -1392,10 +1528,10 @@ const htmlContent = `<!DOCTYPE html>
                 };
             } else {
                 const pageCenter = Math.round(width / 2);
-                const storeX = Math.round(pageCenter + 35);
-                const factoryX = Math.round(storeX + bw + 24);
-                const slotSpacing = 82;
-                const cust0X = Math.round(storeX - (bw / 2) - 38);
+                const storeX = Math.round(pageCenter + 45);
+                const factoryX = Math.round(storeX + bw + 28);
+                const slotSpacing = 84;
+                const cust0X = Math.round(storeX - (bw / 2) - 44);
 
                 return {
                     bw, bh,
@@ -1451,7 +1587,10 @@ const htmlContent = `<!DOCTYPE html>
             if (haveTokens < customer.order.qty) return;
 
             customer.leaving = true;
-            if (customer.order.isRecipe) {
+            if (customer.order.isCraftedItem) {
+                if (!this.state.crafted) this.state.crafted = {};
+                this.state.crafted[customer.order.itemKey] = Math.max(0, (this.state.crafted[customer.order.itemKey] || 0) - customer.order.qty);
+            } else if (customer.order.isRecipe) {
                 Object.keys(customer.order.costTokens).forEach(tKey => {
                     this.state.resources[tKey] -= customer.order.costTokens[tKey];
                 });
@@ -1612,10 +1751,8 @@ const htmlContent = `<!DOCTYPE html>
             // GATE ROW: Sits below the streak/bins
             let bottomY;
             if (isMobile) {
-                // Position gate lower on mobile while keeping clear headroom above the bus lane
-                const maxGateY = busY - (isSmallScreen ? 58 : 64);
-                const idealGateY = Math.round(streakY + (busY - streakY) * 0.58);
-                bottomY = Math.min(maxGateY, Math.max(streakY + 44, idealGateY));
+                // Position gate a bit below the streak to allow enough room for the bus to exist
+                bottomY = streakY + (isSmallScreen ? 24 : 28);
             } else {
                 bottomY = streakY + (height < 530 ? 24 : (isSmallScreen ? 28 : 36));
             }
@@ -1790,6 +1927,7 @@ const htmlContent = `<!DOCTYPE html>
             const totalActionW = (activeActionButtons.length * btnSize) + Math.max(0, (activeActionButtons.length - 1) * btnSpacing);
             const clusterStartX = Math.round((width - totalActionW) / 2);
 
+            this.activeToolbarButtons = [];
             activeActionButtons.forEach((act, idx) => {
                 const bx = clusterStartX + (idx * (btnSize + btnSpacing));
                 const btnContainer = this.add.container(bx, toolbarY).setDepth(20);
@@ -1804,22 +1942,32 @@ const htmlContent = `<!DOCTYPE html>
                     fontSize: '15px'
                 }).setOrigin(0.5);
 
-                btnContainer.add([bgGfx, iconTxt]);
+                const fillGfx = this.add.graphics();
+                btnContainer.add([bgGfx, iconTxt, fillGfx]);
+
+                act.btnContainer = btnContainer;
+                act.bgGfx = bgGfx;
+                act.fillGfx = fillGfx;
+                act.btnSize = btnSize;
+                this.activeToolbarButtons.push(act);
 
                 if (act.type === 'sanitiser') {
                     this.sanitiserContainer = btnContainer;
                     this.sanitiserBgGfx = bgGfx;
-                    this.sanitiserFillGfx = this.add.graphics();
-                    btnContainer.add(this.sanitiserFillGfx);
-                    this.updateSanitiserBtnUI();
+                    this.sanitiserFillGfx = fillGfx;
                 }
 
                 btnContainer.setSize(btnSize, btnSize);
                 btnContainer.setInteractive(new Phaser.Geom.Rectangle(0, 0, btnSize, btnSize), Phaser.Geom.Rectangle.Contains);
-                btnContainer.on('pointerup', () => act.action());
+                btnContainer.on('pointerup', () => {
+                    const cd = act.type === 'sanitiser' ? (this.state.sanitiserCooldown || 0) : ((this.state.petCooldowns && this.state.petCooldowns[act.targetType]) || 0);
+                    if (cd > 0) return;
+                    act.action();
+                });
 
                 this.mainContainer.add(btnContainer);
             });
+            this.updateToolbarCooldownsUI();
 
             // Auto-Sort Pause/Resume Toggle (placed to the right, aligning near overflow block)
             if (this.state.unlockedAutoSort) {
@@ -1908,7 +2056,7 @@ const htmlContent = `<!DOCTYPE html>
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
             const gateLabel = isMobile ? 'GATE' : 'GATE [SPACE]';
-            this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - 36, gateLabel, { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - (isMobile ? 26 : 36), gateLabel, { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
 
             this.autoGateGfx = this.add.graphics();
             this.autoSortGfx = this.add.graphics().setDepth(25);
@@ -2038,7 +2186,7 @@ const htmlContent = `<!DOCTYPE html>
         renderConveyorHUD(w, y) {
             let statusText = '⚙️ Conveyor Idle';
             if (this.currentCraftJob) {
-                const nextNames = this.craftingConveyor.map(j => j.recipeName).join(' ➔ ');
+                const nextNames = (this.craftingConveyor || []).map(j => j.recipeName).join(' ➔ ');
                 statusText = \`🔥 COOKING: \${this.currentCraftJob.recipeName}\${nextNames ? ' | NEXT: ' + nextNames : ''}\`;
             }
 
@@ -2148,23 +2296,26 @@ const htmlContent = `<!DOCTYPE html>
             }
         }
 
-        renderRepresentativeBlocks(storeX, factoryX, blockY, bw = 54, bh = 44) {
-            // STORE BLOCK (Temporary representative building)
+        renderRepresentativeBlocks(storeX, factoryX, blockY, bw = 72, bh = 56) {
+            // STORE BLOCK
             const storeContainer = this.add.container(storeX, blockY).setDepth(6);
             const sGfx = this.add.graphics();
             sGfx.fillStyle(0x1e293b, 0.95);
-            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
             sGfx.lineStyle(2, 0x475569, 1);
-            sGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
+            sGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
             // Green & white awning
+            const awningH = 11;
             sGfx.fillStyle(0x15803d, 1);
-            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, 10, 3);
+            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, awningH, 3);
             sGfx.fillStyle(0xffffff, 0.35);
-            sGfx.fillRect(-bw / 2 + Math.round(bw * 0.18), -bh / 2, Math.round(bw * 0.16), 10);
-            sGfx.fillRect(-bw / 2 + Math.round(bw * 0.52), -bh / 2, Math.round(bw * 0.16), 10);
+            sGfx.fillRect(-bw / 2 + Math.round(bw * 0.18), -bh / 2, Math.round(bw * 0.16), awningH);
+            sGfx.fillRect(-bw / 2 + Math.round(bw * 0.52), -bh / 2, Math.round(bw * 0.16), awningH);
 
-            const storeIcon = this.add.text(0, -5, '🏪', { fontSize: bw < 50 ? '16px' : '18px' }).setOrigin(0.5);
-            const storeLabel = this.add.text(0, 13, 'STORE', { fontSize: bw < 50 ? '7.5px' : '8.5px', style: 'bold', color: '#86efac' }).setOrigin(0.5);
+            const storeIcon = this.add.text(0, -6, '🏪', { fontSize: bw < 60 ? '20px' : '23px' }).setOrigin(0.5);
+            const storeLabel = this.add.text(0, Math.round(bh / 2) - 10, 'STORE', {
+                fontSize: bw < 60 ? '9.5px' : '11px', style: 'bold', color: '#86efac'
+            }).setOrigin(0.5);
             storeContainer.add([sGfx, storeIcon, storeLabel]);
             storeContainer.setSize(bw, bh);
             storeContainer.setInteractive({ useHandCursor: true });
@@ -2173,23 +2324,46 @@ const htmlContent = `<!DOCTYPE html>
             });
 
             // FACTORY BLOCK (Click to enter Factory Crafting Workshop)
+            const isFactUnlocked = !!this.state.factoryUnlocked;
             const factoryContainer = this.add.container(factoryX, blockY).setDepth(6);
             const fGfx = this.add.graphics();
-            fGfx.fillStyle(0x334155, 0.95);
-            fGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
-            fGfx.lineStyle(2, this.state.factoryUnlocked ? 0x38bdf8 : 0x64748b, 1);
-            fGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 6);
-            // Chimney stack
-            fGfx.fillStyle(0x475569, 1);
-            fGfx.fillRect(bw / 2 - 14, -bh / 2 - 8, 8, 8);
-            fGfx.lineStyle(1.5, 0x94a3b8, 0.8);
-            fGfx.strokeRect(bw / 2 - 14, -bh / 2 - 8, 8, 8);
 
-            const factoryIcon = this.add.text(0, -5, '🏭', { fontSize: bw < 50 ? '16px' : '18px' }).setOrigin(0.5);
-            const isFactUnlocked = !!this.state.factoryUnlocked;
-            const factoryLabel = this.add.text(0, 13, isFactUnlocked ? 'FACTORY' : 'FACTORY 🔒', {
-                fontSize: bw < 50 ? '7.5px' : '8px', style: 'bold', color: isFactUnlocked ? '#93c5fd' : '#f59e0b'
+            // When unlocked: NOT greyed out! Rich industrial slate/cyan metallic look
+            const factBgColor = isFactUnlocked ? 0x0f2a4a : 0x242d38;
+            const factBorderColor = isFactUnlocked ? 0x00e5ff : 0x475569;
+            const factChimneyColor = isFactUnlocked ? 0x0284c7 : 0x334155;
+            const factTrimColor = isFactUnlocked ? 0x38bdf8 : 0x64748b;
+
+            fGfx.fillStyle(factBgColor, 0.95);
+            fGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
+            fGfx.lineStyle(2, factBorderColor, 1);
+            fGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
+
+            // Chimney stack
+            fGfx.fillStyle(factChimneyColor, 1);
+            fGfx.fillRect(bw / 2 - 16, -bh / 2 - 10, 10, 10);
+            fGfx.lineStyle(1.5, factTrimColor, 0.9);
+            fGfx.strokeRect(bw / 2 - 16, -bh / 2 - 10, 10, 10);
+
+            // Unlocked roof indicator bar
+            if (isFactUnlocked) {
+                fGfx.fillStyle(0x0284c7, 1);
+                fGfx.fillRoundedRect(-bw / 2 + 3, -bh / 2 + 2, bw - 6, 4, 2);
+            }
+
+            const factoryIcon = this.add.text(0, -6, '🏭', {
+                fontSize: bw < 60 ? '20px' : '23px'
             }).setOrigin(0.5);
+            if (!isFactUnlocked) {
+                factoryIcon.setAlpha(0.65);
+            }
+
+            const factoryLabel = this.add.text(0, Math.round(bh / 2) - 10, isFactUnlocked ? 'FACTORY' : 'FACTORY 🔒', {
+                fontSize: bw < 60 ? '9.5px' : '10.5px',
+                style: 'bold',
+                color: isFactUnlocked ? '#38bdf8' : '#f59e0b'
+            }).setOrigin(0.5);
+
             factoryContainer.add([fGfx, factoryIcon, factoryLabel]);
             factoryContainer.setSize(bw, bh);
             factoryContainer.setInteractive({ useHandCursor: true });
@@ -2361,6 +2535,7 @@ const htmlContent = `<!DOCTYPE html>
                             if (canCraft) {
                                 btnCraft.setInteractive({ useHandCursor: true }).on('pointerup', () => {
                                     this.state.resources[r.resKey] -= r.costVal;
+                                    if (!this.craftingConveyor) this.craftingConveyor = [];
                                     this.craftingConveyor.push({ shopId: s.id, recipeKey: r.key, recipeName: r.name });
                                     this.processCraftingConveyor();
                                     this.requestLayoutRebuild();
@@ -2398,15 +2573,19 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         processCraftingConveyor() {
+            if (!this.craftingConveyor) this.craftingConveyor = [];
             if (this.currentCraftJob || this.craftingConveyor.length === 0) return;
 
             this.currentCraftJob = this.craftingConveyor.shift();
             this.requestLayoutRebuild();
 
             this.time.delayedCall(1000, () => {
-                this.state.crafted[this.currentCraftJob.recipeKey]++;
-                this.addXP(10);
-                this.currentCraftJob = null;
+                if (this.currentCraftJob) {
+                    if (!this.state.crafted) this.state.crafted = {};
+                    this.state.crafted[this.currentCraftJob.recipeKey] = (this.state.crafted[this.currentCraftJob.recipeKey] || 0) + 1;
+                    this.addXP(10);
+                    this.currentCraftJob = null;
+                }
                 this.requestLayoutRebuild();
 
                 this.processCraftingConveyor();
@@ -2792,7 +2971,13 @@ const htmlContent = `<!DOCTYPE html>
                     const overflowGap = (actualQueueSpan >= 9 * 56) ? 44 : 34;
                     const overflowX = this.getQueueSlotX(9) + overflowGap;
                     this.overflowBlockContainer.setPosition(overflowX, qY);
-                    this.overflowNumText.setText('+' + excess);
+                    const excessLabel = excess > 999 ? '999+' : ('+' + excess);
+                    this.overflowNumText.setText(excessLabel);
+                    if (excess > 999) {
+                        this.overflowNumText.setFontSize('9.5px');
+                    } else {
+                        this.overflowNumText.setFontSize('11px');
+                    }
                     this.overflowBlockContainer.setVisible(true);
                 } else {
                     this.overflowBlockContainer.setVisible(false);
@@ -3241,7 +3426,33 @@ const htmlContent = `<!DOCTYPE html>
                             this.state.busRushInterval = Math.max(5000, 25000 - ((this.state.upgrades.busRush.lvl - 1) * 5000));
                             this.state.upgrades.busRush.cost *= 2;
                         }
-                    }
+                    },
+                    ...(this.state.isGateAuto ? [{
+                        id: 'toggleGateAuto',
+                        name: '⚙️ Auto-Gate',
+                        desc: this.state.autoGatePaused ? 'Status: PAUSED. Tap to resume.' : 'Status: RUNNING. Tap to pause.',
+                        cost: this.state.autoGatePaused ? 'RESUME' : 'PAUSE',
+                        lvl: this.state.autoGatePaused ? 0 : 1, max: 1, reqLvl: 1,
+                        isToggle: true,
+                        isPaused: !!this.state.autoGatePaused,
+                        canAfford: true,
+                        action: () => {
+                            this.state.autoGatePaused = !this.state.autoGatePaused;
+                        }
+                    }] : []),
+                    ...(this.state.busRushUnlocked ? [{
+                        id: 'toggleBusRush',
+                        name: '🚌 Buses Event',
+                        desc: this.state.busRushPaused ? 'Status: PAUSED. Tap to resume.' : 'Status: RUNNING. Tap to pause.',
+                        cost: this.state.busRushPaused ? 'RESUME' : 'PAUSE',
+                        lvl: this.state.busRushPaused ? 0 : 1, max: 1, reqLvl: 4,
+                        isToggle: true,
+                        isPaused: !!this.state.busRushPaused,
+                        canAfford: true,
+                        action: () => {
+                            this.state.busRushPaused = !this.state.busRushPaused;
+                        }
+                    }] : [])
                 ];
             } else if (catKey === 'conveyor') {
                 upgradeList = [
@@ -3640,7 +3851,8 @@ const htmlContent = `<!DOCTYPE html>
             const mask = this.modalMaskGfx.createGeometryMask();
             this.upgradeListContainer.setMask(mask);
 
-            const itemHeight = 48;
+            const isSmallScreenModal = (this.scale && this.scale.height > this.scale.width && this.scale.width < 600) || viewW < 320;
+            const itemHeight = isSmallScreenModal ? 64 : 48;
             let totalDragDistance = 0;
             this.activeUpgradeCards = [];
 
@@ -3656,33 +3868,70 @@ const htmlContent = `<!DOCTYPE html>
                     if (tierIdx === 3) isPrevUnlocked = (upgradeList[idx - 1].lvl > 0);
                 }
 
+                if (isSmallScreenModal) {
+                    const itemCardGfx = this.add.graphics();
+                    itemCardGfx.fillStyle(0x1e293b, 0.45);
+                    itemCardGfx.fillRoundedRect(startX - 6, uy, viewW - 14, itemHeight - 5, 5);
+                    this.upgradeListContainer.add(itemCardGfx);
+                }
+
+                const actionRightX = boxLeft + boxW - 20;
+                const actionY = isSmallScreenModal ? (uy + itemHeight - 9) : (uy + 4);
+                const actionOriginY = isSmallScreenModal ? 1 : 0;
+
                 if (!isLevelMet) {
-                    const nameTxt = this.add.text(startX, uy + 6, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
-                    const lockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, '[ Requires Level ' + uItem.reqLvl + ' ]', {
-                        fontSize: '10.5px', style: 'bold', color: '#ff9800'
-                    }).setOrigin(1, 0);
+                    const nameTxt = this.add.text(startX, uy + 4, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
+                    const lockBadge = this.add.text(actionRightX, actionY, '[ Req Level ' + uItem.reqLvl + ' ]', {
+                        fontSize: isSmallScreenModal ? '9.5px' : '10.5px', style: 'bold', color: '#ff9800'
+                    }).setOrigin(1, actionOriginY);
 
                     this.upgradeListContainer.add([nameTxt, lockBadge]);
                 } else if (!isPrevUnlocked) {
-                    const nameTxt = this.add.text(startX, uy + 6, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
-                    const prevLockBadge = this.add.text(boxLeft + boxW - 35, uy + 6, '[ Need previous upgrade ]', {
-                        fontSize: '10.5px', style: 'bold', color: '#ff9800'
-                    }).setOrigin(1, 0);
+                    const nameTxt = this.add.text(startX, uy + 4, uItem.name, { fontSize: '11px', style: 'bold', color: '#aaaaaa' });
+                    const prevLockBadge = this.add.text(actionRightX, actionY, '[ Need prev upgrade ]', {
+                        fontSize: isSmallScreenModal ? '9.5px' : '10.5px', style: 'bold', color: '#ff9800'
+                    }).setOrigin(1, actionOriginY);
 
                     this.upgradeListContainer.add([nameTxt, prevLockBadge]);
+                } else if (uItem.isToggle) {
+                    const infoTxt = this.add.text(startX, uy + 3, \`\${uItem.name}\n\${uItem.desc}\`, {
+                        fontSize: isSmallScreenModal ? '10px' : '10.5px', color: '#fff', lineSpacing: 2,
+                        wordWrap: { width: isSmallScreenModal ? (viewW - 20) : (viewW - 120) }
+                    });
+
+                    const btnToggle = this.add.text(actionRightX, actionY, uItem.cost, {
+                        fontSize: '10px', style: 'bold',
+                        backgroundColor: uItem.isPaused ? '#dc2626' : '#16a34a',
+                        color: '#ffffff', padding: { x: 8, y: 3 }
+                    }).setOrigin(1, actionOriginY).setInteractive({ useHandCursor: true });
+
+                    btnToggle.on('pointerup', (pointer) => {
+                        if (totalDragDistance > 8) return;
+                        if (pointer.y < viewY || pointer.y > viewBottomY) return;
+                        uItem.action();
+                        this.requestLayoutRebuild();
+                        this.openModal('upgrades', this.activeUpgradeCategory, true);
+                    });
+
+                    this.upgradeListContainer.add([infoTxt, btnToggle]);
                 } else {
-                    const infoTxt = this.add.text(startX, uy, \`\${uItem.name}\n\${uItem.desc}\`, { fontSize: '10.5px', color: '#fff', lineSpacing: 2 });
+                    const infoTxt = this.add.text(startX, uy + 3, \`\${uItem.name}\n\${uItem.desc}\`, {
+                        fontSize: isSmallScreenModal ? '10px' : '10.5px', color: '#fff', lineSpacing: 2,
+                        wordWrap: { width: isSmallScreenModal ? (viewW - 20) : (viewW - 120) }
+                    });
 
                     if (uItem.lvl >= uItem.max) {
-                        const maxBadge = this.add.text(boxLeft + boxW - 35, uy + 6, \`[ Lvl \${uItem.lvl}/\${uItem.max} MAX ]\`, { fontSize: '11px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
+                        const maxBadge = this.add.text(actionRightX, actionY, \`[ Lvl \${uItem.lvl}/\${uItem.max} MAX ]\`, {
+                            fontSize: isSmallScreenModal ? '9.5px' : '11px', style: 'bold', color: '#00ff00'
+                        }).setOrigin(1, actionOriginY);
                         this.upgradeListContainer.add([infoTxt, maxBadge]);
                     } else {
                         const lvlBadgeStr = uItem.max > 1 ? \`Lvl \${uItem.lvl}/\${uItem.max} \` : '';
-                        const btnBuy = this.add.text(boxLeft + boxW - 35, uy + 4, \`\${lvlBadgeStr}BUY (\${uItem.cost})\`, {
-                            fontSize: '10px', style: 'bold',
+                        const btnBuy = this.add.text(actionRightX, actionY, \`\${lvlBadgeStr}BUY (\${uItem.cost})\`, {
+                            fontSize: isSmallScreenModal ? '9.5px' : '10px', style: 'bold',
                             backgroundColor: uItem.canAfford ? '#00e676' : '#424242',
-                            color: uItem.canAfford ? '#000' : '#aaa', padding: 4
-                        }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
+                            color: uItem.canAfford ? '#000' : '#aaa', padding: { x: 5, y: 3 }
+                        }).setOrigin(1, actionOriginY).setInteractive({ useHandCursor: true });
 
                         btnBuy.on('pointerup', (pointer) => {
                             if (totalDragDistance > 8) return;
@@ -3926,20 +4175,7 @@ const htmlContent = `<!DOCTYPE html>
             const mask = this.modalMaskGfx.createGeometryMask();
             this.upgradeListContainer.setMask(mask);
 
-            const recipes = [
-                { name: '🌱 Fertilizer', key: 'fertilizer', req: '5 🟢', costVal: 5, resKey: 'organic', binId: 'organic', tier: 1 },
-                { name: '🛢️ Biofuel', key: 'biofuel', req: '10 🟢', costVal: 10, resKey: 'organic', binId: 'organic', tier: 2 },
-                { name: '🍂 Compost', key: 'compost', req: '15 🟢', costVal: 15, resKey: 'organic', binId: 'organic', tier: 3 },
-                { name: '📄 Rec.Paper', key: 'recycled_paper', req: '5 🔵', costVal: 5, resKey: 'paper', binId: 'paper', tier: 1 },
-                { name: '📦 Cardboard', key: 'cardboard', req: '10 🔵', costVal: 10, resKey: 'paper', binId: 'paper', tier: 2 },
-                { name: '📓 Notebook', key: 'notebook', req: '15 🔵', costVal: 15, resKey: 'paper', binId: 'paper', tier: 3 },
-                { name: '🏺 Glass Vase', key: 'glass_vase', req: '5 🟣', costVal: 5, resKey: 'glass', binId: 'glass', tier: 1 },
-                { name: '🪞 Mirror', key: 'mirror', req: '10 🟣', costVal: 10, resKey: 'glass', binId: 'glass', tier: 2 },
-                { name: '🔍 Lens', key: 'lens', req: '15 🟣', costVal: 15, resKey: 'glass', binId: 'glass', tier: 3 },
-                { name: '🧵 Filament', key: 'filament', req: '5 🟡', costVal: 5, resKey: 'plastic', binId: 'plastic', tier: 1 },
-                { name: '🧱 Brick', key: 'plastic_brick', req: '10 🟡', costVal: 10, resKey: 'plastic', binId: 'plastic', tier: 2 },
-                { name: '🧪 Pipe', key: 'pipe', req: '15 🟡', costVal: 15, resKey: 'plastic', binId: 'plastic', tier: 3 }
-            ];
+            const recipes = FACTORY_RECIPES;
 
             const cols = 3;
             const colGap = 8;
@@ -3991,6 +4227,7 @@ const htmlContent = `<!DOCTYPE html>
                         if (pointer.y < viewY || pointer.y > viewBottomY) return;
                         if (canAfford) {
                             this.state.resources[rec.resKey] -= rec.costVal;
+                            if (!this.craftingConveyor) this.craftingConveyor = [];
                             this.craftingConveyor.push({ shopId: rec.resKey, recipeKey: rec.key, recipeName: rec.name });
                             this.processCraftingConveyor();
                             this.updateUI();
