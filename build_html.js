@@ -24,7 +24,7 @@ const htmlContent = `<!DOCTYPE html>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="phaser.min.js"></script>
-    <script>if (typeof Phaser === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"><\\/script>'); }</script>
+    <script>if (typeof Phaser === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js" crossorigin="anonymous"><\\/script>'); }</script>
     <style>
         :root {
             --sat: env(safe-area-inset-top, 0px);
@@ -591,10 +591,12 @@ const htmlContent = `<!DOCTYPE html>
             this.input.keyboard.on('keydown', (e) => {
                 if (this.arcadeState && this.arcadeState.active) {
                     if (['1','2','3','4','5','6'].includes(e.key)) {
+                        if (e.repeat) return;
                         const typeMap = { '1': 'organic', '2': 'paper', '3': 'glass', '4': 'plastic', '5': 'metal', '6': 'fabric' };
                         const chosen = typeMap[e.key];
                         if (chosen) this.sortArcadeTrash(chosen);
                     } else if (e.code === 'Space') {
+                        if (e.repeat) return;
                         if (this.arcadeState.queue && this.arcadeState.queue.length > 0) {
                             this.sortArcadeTrash(this.arcadeState.queue[0].type);
                         }
@@ -611,10 +613,14 @@ const htmlContent = `<!DOCTYPE html>
                         this.sortHeadTrash(chosen, 0);
                     }
                 } else if (e.code === 'Space') {
+                    // Require discrete presses instead of holding Space to bypass auto-gate
+                    if (e.repeat) return;
                     this.triggerGate();
                 } else if (e.code === 'KeyV' || e.key === 'v' || e.key === 'V') {
+                    if (e.repeat) return;
                     this.triggerSanitiseAction();
                 } else if (e.code === 'KeyB' || e.key === 'b' || e.key === 'B') {
+                    if (e.repeat) return;
                     this.cashInActiveBus();
                 }
             });
@@ -681,6 +687,10 @@ const htmlContent = `<!DOCTYPE html>
                     const now = Date.now();
                     const dt = Math.max(0, now - (this.lastTickTime || now));
                     this.lastTickTime = now;
+                    if (this.arcadeState && this.arcadeState.active) {
+                        this.updateArcade();
+                        return;
+                    }
                     if (dt > 100) {
                         this.tickGameSimulation(dt);
                     }
@@ -742,7 +752,8 @@ const htmlContent = `<!DOCTYPE html>
         scheduleBusRush() {
             const delay = this.state.busRushInterval || 25000;
             this.time.delayedCall(delay, () => {
-                if (this.state.busRushUnlocked && !this.state.busRushPaused && Math.random() < 0.65) {
+                const inArcade = !!(this.arcadeState && this.arcadeState.active);
+                if (!inArcade && this.state.busRushUnlocked && !this.state.busRushPaused && Math.random() < 0.65) {
                     this.triggerBusRushEvent();
                 }
                 this.scheduleBusRush();
@@ -775,12 +786,17 @@ const htmlContent = `<!DOCTYPE html>
             }
 
             if (this.arcadeState && this.arcadeState.active) {
-                this.updateArcade(delta);
+                this.updateArcade();
             }
         }
 
         tickGameSimulation(dt) {
-            if (!this.state || (this.arcadeState && this.arcadeState.active)) return;
+            if (!this.state) return;
+            if (this.arcadeState && this.arcadeState.active) {
+                // Keep arcade timers running on real wall-clock time even when tab is hidden
+                this.updateArcade();
+                return;
+            }
 
             // 1. Customer Arrivals (Original fast rate: 85% every 1000ms)
             this.spawnAccumulator = (this.spawnAccumulator || 0) + dt;
@@ -814,7 +830,9 @@ const htmlContent = `<!DOCTYPE html>
             const hasExcess = (this.state.excessTrashCount || 0) > 0;
             const canAutoSort = this.state.unlockedAutoSort && !this.state.autoSortPaused && hasExcess;
             if (canAutoSort) {
+                const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
                 this.state.autoSortTimer = (this.state.autoSortTimer || 0) + dt;
+                let autoSortedVisualCount = 0;
                 while (this.state.autoSortTimer >= this.state.autoSortDelay && (this.state.excessTrashCount || 0) > 0) {
                     this.state.autoSortTimer -= this.state.autoSortDelay;
                     this.state.excessTrashCount--;
@@ -823,6 +841,28 @@ const htmlContent = `<!DOCTYPE html>
                     const mult = (Math.random() < this.state.doubleTokenChance) ? 2 : 1;
                     this.state.resources[typeKey] += mult;
                     this.state.money += 1;
+
+                    // Floating "+1 Glass" / "+2 Green" feedback on Auto-Sort (capped per tick for AFK catchup)
+                    if (!isHidden && autoSortedVisualCount < 3) {
+                        autoSortedVisualCount++;
+                        const tData = TRASH_TYPES[typeKey] || { name: typeKey, colorHex: '#00e676' };
+                        const shortName = typeKey === 'plastic' ? 'Plastic' : tData.name;
+                        const targetBin = this.bins && this.bins.find(b => b.id === typeKey);
+                        const popX = targetBin ? targetBin.x : ((this.overflowBlockContainer && this.overflowBlockContainer.visible) ? this.overflowBlockContainer.x : (this.scale.width / 2));
+                        const popY = targetBin ? (targetBin.y - 26) : ((this.queueY || 300) - 24);
+                        const popTxt = this.add.text(popX, popY, '🤖 +' + mult + ' ' + shortName, {
+                            fontSize: '12px', style: 'bold', color: tData.colorHex || '#00e676',
+                            stroke: '#000000', strokeThickness: 3
+                        }).setOrigin(0.5).setDepth(35);
+                        const cleanPop = () => { if (popTxt && popTxt.active) popTxt.destroy(); };
+                        setTimeout(cleanPop, 1000);
+                        if (this.tweens && this.tweens.add) {
+                            this.tweens.add({ targets: popTxt, y: popY - 30, alpha: 0, duration: 850, onComplete: cleanPop });
+                        } else {
+                            cleanPop();
+                        }
+                    }
+
                     this.renderHorizontalQueue();
                 }
                 const sortProgress = Math.min(1, this.state.autoSortTimer / this.state.autoSortDelay);
@@ -1240,6 +1280,7 @@ const htmlContent = `<!DOCTYPE html>
 
         triggerBusRushEvent() {
             if (this.state.busRushPaused) return;
+            if (this.arcadeState && this.arcadeState.active) return;
             if (!this.activeBuses) this.activeBuses = [];
             // Cap at 3 concurrent buses
             const activeCount = this.activeBuses.filter(b => b && b.active && !b.isCashedIn).length;
@@ -1958,6 +1999,9 @@ const htmlContent = `<!DOCTYPE html>
             }
             if (this.mainContainer) this.mainContainer.destroy(true);
             this.mainContainer = this.add.container(0, 0).setDepth(10);
+            if (this.arcadeState && this.arcadeState.active) {
+                this.mainContainer.setVisible(false);
+            }
             this.dragLayer = this.add.container(0, 0).setDepth(95);
 
             // Cleanly reset trash container references so they are rebuilt at exact new scale and positions
@@ -2326,10 +2370,11 @@ const htmlContent = `<!DOCTYPE html>
                     .setOrigin(0.5)
                     .setInteractive({ useHandCursor: true });
 
-                binTouchZone.on('pointerdown', () => {
+                // Tap = sort head trash into bin; Hold = open this bin's settings/upgrades!
+                this.setupLongPress(binTouchZone, b.id + '_bin', () => {
                     if (this.draggedItem) return;
                     this.sortHeadTrash(b.id, 0);
-                });
+                }, bx, binCenterY);
 
                 if (b.animKey) {
                     sprite.on('animationcomplete', () => {
@@ -3069,24 +3114,30 @@ const htmlContent = `<!DOCTYPE html>
             }
         }
 
-        setupLongPress(sprite, targetType) {
-            sprite.on('pointerdown', (pointer) => {
+        setupLongPress(sprite, targetType, tapCallback = null, ringX = null, ringY = null) {
+            sprite.on('pointerdown', () => {
+                if (this.draggedItem) return;
+                this.clearLongPress();
                 this.isHolding = true;
-                const downTime = pointer.downTime;
+                this.longPressTriggered = false;
+                const downWallTime = Date.now();
+                const cx = (ringX !== null) ? ringX : sprite.x;
+                const cy = (ringY !== null) ? ringY : sprite.y;
 
                 this.pressTimer = this.time.addEvent({
-                    delay: 30,
-                    repeat: 20,
+                    delay: 25,
+                    repeat: 30,
                     callback: () => {
                         if (!this.isHolding) return;
-                        const elapsed = this.time.now - downTime;
+                        const elapsed = Date.now() - downWallTime;
 
-                        if (elapsed >= 300) {
-                            const progress = (elapsed - 300) / 300;
-                            this.drawLongPressFill(sprite.x, sprite.y, progress);
+                        if (elapsed >= 250) {
+                            const progress = (elapsed - 250) / 300;
+                            this.drawLongPressFill(cx, cy, progress);
                         }
 
-                        if (elapsed >= 600) {
+                        if (elapsed >= 550) {
+                            this.longPressTriggered = true;
                             this.clearLongPress();
                             this.openModal('upgrades', targetType);
                         }
@@ -3094,13 +3145,19 @@ const htmlContent = `<!DOCTYPE html>
                 });
             });
 
-            sprite.on('pointerup', (pointer) => {
-                const totalHold = this.time.now - pointer.downTime;
+            sprite.on('pointerup', () => {
+                const wasHolding = this.isHolding;
+                const didLongPress = this.longPressTriggered;
                 this.clearLongPress();
 
-                if (totalHold < 500) {
-                    if (targetType === 'gate') this.triggerGate();
-                    else if (targetType === 'tip') this.queueTrashFromTip();
+                if (wasHolding && !didLongPress) {
+                    if (typeof tapCallback === 'function') {
+                        tapCallback();
+                    } else if (targetType === 'gate') {
+                        this.triggerGate();
+                    } else if (targetType === 'tip') {
+                        this.queueTrashFromTip();
+                    }
                 }
             });
 
@@ -3841,11 +3898,13 @@ const htmlContent = `<!DOCTYPE html>
             const lm = this.layoutMetrics;
             const safeTop = lm ? lm.safeTop : 0;
             const usableW = lm ? lm.usableW : w;
-            const boxW = Math.min(usableW - 12, 520);
-            const maxModalBottom = this.queueY ? (this.queueY - Math.round(36 * (lm ? lm.queueScale : 1))) : (h * 0.44);
-            const topHalfModalH = Math.round(Math.min(maxModalBottom, Math.min(h * 0.48, 365)));
-            // On very short screens (e.g. mobile landscape), allow the modal to be tall enough to read & scroll comfortably
-            const modalH = (topHalfModalH < 220) ? Math.min(h - 12, 320) : topHalfModalH;
+            // Wider, more comfortable modals on PC / wide screens so upgrade descriptions aren't cut off
+            const maxModalW = (w >= 900) ? 760 : ((w >= 680) ? 640 : 520);
+            const boxW = Math.min(usableW - 16, maxModalW);
+            // Fill the exact sky area right down to the horizon line (splitY) with no awkward gap!
+            const skyBottomY = (typeof this.splitY === 'number' && this.splitY > 0) ? Math.round(this.splitY) : Math.round(h * 0.42);
+            // On very short landscape screens where the sky is tiny (< 210px), allow enough height to read & scroll comfortably
+            const modalH = (skyBottomY < 210) ? Math.min(h - 12, 300) : skyBottomY;
             const modalTop = safeTop + 6;
             const boxLeft = Math.round((w - boxW) / 2);
 
@@ -4051,6 +4110,20 @@ const htmlContent = `<!DOCTYPE html>
                             this.requestLayoutRebuild();
                         }
                     },
+                    ...(this.state.unlockedAutoSort ? [{
+                        id: 'toggleAutoSort',
+                        name: '🤖 Auto-Sort Excess',
+                        desc: this.state.autoSortPaused ? 'Status: PAUSED. Tap to resume.' : 'Status: RUNNING. Tap to pause.',
+                        cost: this.state.autoSortPaused ? 'RESUME' : 'PAUSE',
+                        lvl: this.state.autoSortPaused ? 0 : 1, max: 1, reqLvl: 2,
+                        isToggle: true,
+                        isPaused: !!this.state.autoSortPaused,
+                        canAfford: true,
+                        action: () => {
+                            this.state.autoSortPaused = !this.state.autoSortPaused;
+                            this.requestLayoutRebuild();
+                        }
+                    }] : []),
                     // PET CONVEYOR HELPERS
                     {
                         id: 'petDog',
@@ -4261,8 +4334,15 @@ const htmlContent = `<!DOCTYPE html>
             const list = this.getUpgradeListForCategory(catKey);
             for (let i = 0; i < list.length; i++) {
                 const u = list[i];
+                if (u.isToggle) continue;
                 const isLevelMet = (this.state.level >= u.reqLvl);
-                const isPrevUnlocked = (i === 0) || (list[i - 1].lvl > 0);
+                let isPrevUnlocked = true;
+                if (catKey === 'skills') {
+                    isPrevUnlocked = (i === 0) || (list[i - 1].lvl > 0);
+                } else if (catKey === 'bins' || (typeof catKey === 'string' && catKey.endsWith('_bin'))) {
+                    const tierIdx = i % 4;
+                    if (tierIdx === 2 || tierIdx === 3) isPrevUnlocked = (list[i - 1].lvl > 0);
+                }
                 const isNotMax = (u.lvl < u.max);
                 if (isLevelMet && isPrevUnlocked && isNotMax && u.canAfford) {
                     return true;
@@ -4274,11 +4354,20 @@ const htmlContent = `<!DOCTYPE html>
         renderTopHalfUpgradesModal(w, modalH, boxW) {
             const boxLeft = Math.round((w - boxW) / 2);
             const isNarrowModal = boxW < 400;
-            const sidebarW = isNarrowModal ? 96 : 125;
+            const sidebarW = isNarrowModal ? 96 : (boxW >= 680 ? 140 : 125);
             const safeTop = this.layoutMetrics ? this.layoutMetrics.safeTop : 0;
             const headerY = safeTop + 14;
 
-            const title = this.add.text(boxLeft + 12, headerY, isNarrowModal ? '🛠️ UPGRADES' : '🛠️ UPGRADES & STATIONS', {
+            const isSingleBinCat = (typeof this.activeUpgradeCategory === 'string' && this.activeUpgradeCategory.endsWith('_bin'));
+            let modalTitleStr = isNarrowModal ? '🛠️ UPGRADES' : '🛠️ UPGRADES & STATIONS';
+            if (isSingleBinCat) {
+                const bId = this.activeUpgradeCategory.split('_')[0];
+                const tData = TRASH_TYPES[bId];
+                const bName = tData ? tData.name.toUpperCase() : bId.toUpperCase();
+                modalTitleStr = isNarrowModal ? ('🗑️ ' + bName + ' BIN') : ('🗑️ ' + bName + ' BIN SETTINGS');
+            }
+
+            const title = this.add.text(boxLeft + 12, headerY, modalTitleStr, {
                 fontSize: isNarrowModal ? '12.5px' : '14px', style: 'bold', color: '#4fc3f7'
             });
             this.modalWalletTxt = this.add.text(boxLeft + boxW - 12, headerY, '$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP', {
@@ -4314,7 +4403,7 @@ const htmlContent = `<!DOCTYPE html>
             this.modalContainer.add(btnConveyor);
             currY += 28;
 
-            const isBinsSel = (this.activeUpgradeCategory === 'bins');
+            const isBinsSel = (this.activeUpgradeCategory === 'bins' || isSingleBinCat);
             const hasBinsAff = this.hasCategoryAffordable('bins');
             const btnBins = this.add.text(boxLeft + 8, currY, hasBinsAff ? '🗑️ Bins (!)' : '🗑️ Bins', {
                 fontSize: sideBtnFont, style: 'bold',
@@ -4406,7 +4495,7 @@ const htmlContent = `<!DOCTYPE html>
                 let isPrevUnlocked = true;
                 if (this.activeUpgradeCategory === 'skills') {
                     isPrevUnlocked = (idx === 0) || (upgradeList[idx - 1].lvl > 0);
-                } else if (this.activeUpgradeCategory === 'bins') {
+                } else if (this.activeUpgradeCategory === 'bins' || isSingleBinCat) {
                     const tierIdx = idx % 4;
                     if (tierIdx === 2) isPrevUnlocked = (upgradeList[idx - 1].lvl > 0);
                     if (tierIdx === 3) isPrevUnlocked = (upgradeList[idx - 1].lvl > 0);
@@ -5047,13 +5136,24 @@ const htmlContent = `<!DOCTYPE html>
             if (this.mainContainer) this.mainContainer.setVisible(false);
             if (this.arcadeContainer) this.arcadeContainer.destroy();
 
+            // Hide any active main-game buses so they never visually pass across the arcade screen
+            if (this.activeBuses && this.activeBuses.length > 0) {
+                this.activeBuses.forEach(b => {
+                    if (b && b.active) b.setVisible(false);
+                });
+            }
+
+            if (typeof this.arcadeShowColorBg === 'undefined') {
+                this.arcadeShowColorBg = false;
+            }
+
             const w = this.scale.width;
             const h = this.scale.height;
             const lm = this.layoutMetrics;
             const safeTop = lm ? lm.safeTop : 0;
             const safeBottom = lm ? lm.safeBottom : 0;
             const usableW = lm ? lm.usableW : w;
-            const isNarrow = w < 440;
+            const isNarrow = w < 480;
 
             const types = ['organic', 'paper', 'glass', 'plastic'];
             const generateArcadeItem = () => {
@@ -5074,87 +5174,142 @@ const htmlContent = `<!DOCTYPE html>
                 streak: (mode === 'dumpster' ? 10 : 0),
                 streakTimer: (mode === 'dumpster' ? 3500 : 0),
                 streakMax: 3500,
+                speedMult: 1.0,
                 sortedCount: 0,
                 cleanupRemaining: 500,
                 cleanupElapsed: 0,
+                lastWallTime: Date.now(),
                 queue: initialQueue,
                 gameOver: false
             };
 
             this.arcadeContainer = this.add.container(0, 0).setDepth(80);
 
-            // Full-screen interactive background to absorb all clicks and prevent click-through to main game
-            const bg = this.add.rectangle(w / 2, h / 2, w, h, 0x0a0e17, 1).setInteractive();
-            bg.on('pointerdown', () => {});
-            this.arcadeContainer.add(bg);
+            // Transparent hit-absorber zone so main game sky, clouds, ground & unlocked decorations shine through!
+            const bgHit = this.add.zone(w / 2, h / 2, w, h).setInteractive();
+            bgHit.on('pointerdown', () => {});
+            this.arcadeContainer.add(bgHit);
 
-            // Header info (zero overlap between title and EXIT button on narrow phones!)
-            const headerY = safeTop + 20;
+            // Clean semi-transparent top HUD panel so title, stats & progress bar pop crisply over the sky
+            const headerTop = safeTop + 6;
+            const headerPanelH = isNarrow ? 94 : 92;
+            const headerPanelW = Math.min(usableW - 16, 620);
+            const headerPanelX = Math.round((w - headerPanelW) / 2);
+            const headerPanel = this.add.graphics();
+            headerPanel.fillStyle(0x0f172a, 0.86);
+            headerPanel.fillRoundedRect(headerPanelX, headerTop, headerPanelW, headerPanelH, 10);
+            headerPanel.lineStyle(1.5, mode === 'dumpster' ? 0xff7043 : 0x38bdf8, 0.9);
+            headerPanel.strokeRoundedRect(headerPanelX, headerTop, headerPanelW, headerPanelH, 10);
+            this.arcadeContainer.add(headerPanel);
+
+            // Header info (zero overlap between title, BG toggle, and EXIT button on narrow phones!)
+            const headerY = headerTop + 18;
             const challengeTitle = (mode === 'dumpster')
                 ? (isNarrow ? '🔥 DUMPSTER FRENZY' : '🔥 DUMPSTER FIRE FRENZY')
-                : (isNarrow ? '🧹 500-PIECE CLEAN' : '🧹 500-PIECE CLEAN UP');
-            const titleX = isNarrow ? 14 : (w / 2);
-            const titleTxt = this.add.text(titleX, headerY, challengeTitle, {
-                fontSize: isNarrow ? '14px' : '18px', style: 'bold', color: (mode === 'dumpster' ? '#ff7043' : '#4dd0e1')
-            }).setOrigin(isNarrow ? 0 : 0.5, 0.5);
+                : (isNarrow ? '🧹 500 CLEAN' : '🧹 500-PIECE SPEED CLEAN');
+            const titleTxt = this.add.text(headerPanelX + 12, headerY, challengeTitle, {
+                fontSize: isNarrow ? '12.5px' : '16px', style: 'bold', color: (mode === 'dumpster' ? '#ff7043' : '#4dd0e1')
+            }).setOrigin(0, 0.5);
 
-            this.arcadeStatsTxt = this.add.text(w / 2, headerY + 28, '', {
-                fontSize: isNarrow ? '12px' : '13px', style: 'bold', color: '#ffffff'
-            }).setOrigin(0.5);
-
-            this.arcadeBarGfx = this.add.graphics();
-
-            const btnExit = this.add.text(w - 14, headerY, '✖ EXIT', {
-                fontSize: '11px', style: 'bold', backgroundColor: '#374151', color: '#ffffff', padding: { x: 10, y: 5 }
+            const btnExit = this.add.text(headerPanelX + headerPanelW - 10, headerY, '✖ EXIT', {
+                fontSize: isNarrow ? '10px' : '11px', style: 'bold', backgroundColor: '#374151', color: '#ffffff', padding: { x: 8, y: 4 }
             }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
-
             btnExit.on('pointerup', () => this.exitArcade());
 
-            this.arcadeContainer.add([titleTxt, this.arcadeStatsTxt, this.arcadeBarGfx, btnExit]);
+            // Toggleable colored rubbish background button (OFF by default)
+            const bgBtnLabel = () => this.arcadeShowColorBg ? '🎨 BG: ON' : '🎨 BG: OFF';
+            const btnBgToggle = this.add.text(headerPanelX + headerPanelW - btnExit.width - 16, headerY, bgBtnLabel(), {
+                fontSize: isNarrow ? '10px' : '11px', style: 'bold',
+                backgroundColor: this.arcadeShowColorBg ? '#15803d' : '#1e293b',
+                color: this.arcadeShowColorBg ? '#ffffff' : '#cbd5e1',
+                padding: { x: 7, y: 4 }
+            }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
 
-            // Bins Row - Authentic styled bins matching main game with generous touch & drag zones
-            const binY = Math.round((h - safeBottom) * 0.72);
-            const binSpacing = Math.min(Math.floor((usableW - 24) / 4), 88);
+            btnBgToggle.on('pointerup', () => {
+                this.arcadeShowColorBg = !this.arcadeShowColorBg;
+                btnBgToggle.setText(bgBtnLabel());
+                btnBgToggle.setStyle({
+                    backgroundColor: this.arcadeShowColorBg ? '#15803d' : '#1e293b',
+                    color: this.arcadeShowColorBg ? '#ffffff' : '#cbd5e1'
+                });
+                this.renderArcadeQueue();
+            });
+
+            this.arcadeStatsTxt = this.add.text(w / 2, headerTop + 44, '', {
+                fontSize: isNarrow ? '11.5px' : '13px', style: 'bold', color: '#ffffff'
+            }).setOrigin(0.5);
+
+            this.arcadeBarY = headerTop + 64;
+            this.arcadeBarGfx = this.add.graphics();
+
+            this.arcadeContainer.add([titleTxt, btnBgToggle, btnExit, this.arcadeStatsTxt, this.arcadeBarGfx]);
+
+            // Bins Row - Authentic animated wheelie bin sprites matching main game!
+            const splitY = this.splitY || Math.round(h * 0.42);
+            const binBaselineY = Math.min(h - safeBottom - 26, Math.max(Math.round(h * 0.78), splitY + 170));
+            const binSpacing = Math.min(Math.floor((usableW - 24) / 4), 104);
             const startBinX = Math.round((w - (3 * binSpacing)) / 2);
+            const maxBinW = Math.min(78, Math.max(48, binSpacing - 8));
+            const maxBinH = Math.min(98, Math.round((h - safeBottom - splitY) * 0.38));
+            const binScale = Math.min(
+                BIN_SPRITE_CONFIG.scale,
+                maxBinW / BIN_SPRITE_CONFIG.frameWidth,
+                maxBinH / BIN_SPRITE_CONFIG.frameHeight
+            );
+            const visualBinW = Math.round(BIN_SPRITE_CONFIG.frameWidth * binScale);
+            const visualBinH = Math.round(BIN_SPRITE_CONFIG.frameHeight * binScale);
+            const binCenterY = binBaselineY - Math.round(visualBinH / 2);
+
             this.arcadeBins = [];
 
             const bins = [
-                { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', sheetKey: 'bin_green_sheet', color: 0x4caf50 },
-                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', sheetKey: 'bin_blue_sheet', color: 0x2196f3 },
-                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', sheetKey: 'bin_purple_sheet', color: 0x9c27b0 },
-                { id: 'plastic', key: '4', name: 'PLASTIC', sprite: 'bin_yellow', sheetKey: 'bin_yellow_sheet', color: 0xffeb3b }
+                { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', sheetKey: 'bin_green_sheet', animKey: 'bin_green_anim', color: 0x4caf50 },
+                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', sheetKey: 'bin_blue_sheet', animKey: 'bin_blue_anim', color: 0x2196f3 },
+                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', sheetKey: 'bin_purple_sheet', animKey: 'bin_purple_anim', color: 0x9c27b0 },
+                { id: 'plastic', key: '4', name: 'PLASTIC', sprite: 'bin_yellow', sheetKey: 'bin_yellow_sheet', animKey: 'bin_yellow_anim', color: 0xffeb3b }
             ];
 
             bins.forEach((b, idx) => {
                 const bx = Math.round(startBinX + (idx * binSpacing));
-                const binW = Math.min(58, binSpacing - 8);
-                const binH = Math.round(binW * 1.32);
+                let binSprite = null;
+                const hasSheet = !!(b.sheetKey && this.textures.exists(b.sheetKey));
 
-                if (b.sheetKey && this.textures.exists(b.sheetKey)) {
-                    const binSprite = this.add.sprite(bx, binY, b.sheetKey, 0).setDisplaySize(binW, binH);
+                if (hasSheet) {
+                    binSprite = this.add.sprite(bx, binBaselineY, b.sheetKey, 0)
+                        .setOrigin(0.5, 1)
+                        .setScale(binScale);
+                    if (b.animKey) {
+                        binSprite.on('animationcomplete', () => {
+                            if (binSprite && binSprite.scene) {
+                                binSprite.setFrame(0);
+                                binSprite.setOrigin(0.5, 1);
+                                binSprite.setScale(binScale);
+                            }
+                        });
+                    }
                     this.arcadeContainer.add(binSprite);
                 } else if (this.textures.exists(b.sprite)) {
-                    const binSprite = this.add.sprite(bx, binY, b.sprite).setDisplaySize(binW, binH);
+                    binSprite = this.add.sprite(bx, binBaselineY, b.sprite)
+                        .setOrigin(0.5, 1)
+                        .setDisplaySize(visualBinW, visualBinH);
                     this.arcadeContainer.add(binSprite);
-                } else {
-                    const bBox = this.add.graphics();
-                    bBox.fillStyle(b.color, 0.85);
-                    bBox.fillRoundedRect(bx - (binW / 2), binY - (binH / 2), binW, binH, 8);
-                    bBox.lineStyle(2, 0xffffff, 0.9);
-                    bBox.strokeRoundedRect(bx - (binW / 2), binY - (binH / 2), binW, binH, 8);
-                    this.arcadeContainer.add(bBox);
                 }
 
-                const bLabel = this.add.text(bx, binY - Math.round(binH / 2) - 14, isNarrow ? b.name : ('[' + b.key + '] ' + b.name), {
-                    fontSize: isNarrow ? '9.5px' : '10.5px', style: 'bold', color: '#ffffff', backgroundColor: '#111827', padding: { x: 4, y: 2 }
+                const bLabel = this.add.text(bx, binBaselineY - visualBinH - 12, isNarrow ? b.name : ('[' + b.key + '] ' + b.name), {
+                    fontSize: isNarrow ? '10px' : '11px', style: 'bold', color: '#ffffff',
+                    backgroundColor: '#111827', padding: { x: 5, y: 2 }
                 }).setOrigin(0.5);
 
-                const hitZone = this.add.zone(bx, binY, Math.max(54, binSpacing - 2), binH + 40)
+                const hitZone = this.add.zone(bx, binCenterY, Math.max(54, binSpacing - 2), visualBinH + 44)
                     .setOrigin(0.5)
                     .setInteractive({ useHandCursor: true });
                 hitZone.on('pointerdown', () => this.sortArcadeTrash(b.id));
 
-                this.arcadeBins.push({ id: b.id, x: bx, y: binY, spacing: binSpacing, h: binH });
+                this.arcadeBins.push({
+                    id: b.id, x: bx, y: binCenterY, baselineY: binBaselineY,
+                    spacing: binSpacing, h: visualBinH,
+                    sprite: binSprite, animKey: b.animKey, baseScale: binScale
+                });
                 this.arcadeContainer.add([bLabel, hitZone]);
             });
 
@@ -5164,6 +5319,7 @@ const htmlContent = `<!DOCTYPE html>
             this.arcadeContainer.add(this.arcadeQueueContainer);
 
             this.renderArcadeQueue();
+            this.updateArcade();
         }
 
         renderArcadeQueue() {
@@ -5172,8 +5328,11 @@ const htmlContent = `<!DOCTYPE html>
 
             const w = this.scale.width;
             const h = this.scale.height;
-            const queueCenterY = Math.round(h * 0.42);
-            const gap = Math.min(52, Math.max(36, Math.floor(w / 8)));
+            const splitY = this.splitY || Math.round(h * 0.42);
+            const firstBin = (this.arcadeBins && this.arcadeBins[0]) ? this.arcadeBins[0] : null;
+            const binTop = firstBin ? (firstBin.baselineY - firstBin.h - 24) : Math.round(h * 0.62);
+            const queueCenterY = Math.round(Math.max(splitY + 42, Math.min(binTop - 52, splitY + 62)));
+            const gap = Math.min(54, Math.max(38, Math.floor(w / 8)));
             const startX = Math.round(w / 2);
 
             // Render back-to-front so hero item (idx 0) is always on top
@@ -5184,33 +5343,39 @@ const htmlContent = `<!DOCTYPE html>
                 const isHero = (idx === 0);
 
                 const itemCont = this.add.container(qx, queueCenterY);
-                const bgCircle = this.add.graphics();
-                bgCircle.fillStyle(TRASH_TYPES[item.type].color, 1);
-                bgCircle.fillCircle(0, 0, 24);
-                bgCircle.lineStyle(2, 0x000000, 1);
-                bgCircle.strokeCircle(0, 0, 24);
-                itemCont.add(bgCircle);
+
+                // Optional colored circle backing (controlled by Arcade BG toggle, OFF by default)
+                if (this.arcadeShowColorBg) {
+                    const bgCircle = this.add.graphics();
+                    bgCircle.fillStyle(TRASH_TYPES[item.type].color, 1);
+                    bgCircle.fillCircle(0, 0, 24);
+                    bgCircle.lineStyle(2, 0x000000, 1);
+                    bgCircle.strokeCircle(0, 0, 24);
+                    itemCont.add(bgCircle);
+                }
 
                 if (this.textures.exists(item.spriteKey)) {
-                    const img = this.add.image(0, 0, item.spriteKey).setDisplaySize(42, 42);
+                    const img = this.add.image(0, 0, item.spriteKey).setDisplaySize(48, 48);
                     itemCont.add(img);
                 }
 
                 if (isHero) {
-                    itemCont.setScale(1.2);
+                    itemCont.setScale(1.18);
                     const heroRing = this.add.graphics();
+                    heroRing.lineStyle(4, 0x000000, 0.45);
+                    heroRing.strokeRoundedRect(-29, -29, 58, 58, 8);
                     heroRing.lineStyle(3, 0xffd700, 1);
-                    heroRing.strokeCircle(0, 0, 29);
+                    heroRing.strokeRoundedRect(-29, -29, 58, 58, 8);
                     itemCont.add(heroRing);
 
                     // Allow dragging the hero item into arcade bins as well as tapping bins!
-                    itemCont.setSize(80, 80);
+                    itemCont.setSize(84, 84);
                     itemCont.setInteractive({ draggable: true, useHandCursor: true });
                     this.input.setDraggable(itemCont);
                     itemCont.on('drag', (pointer, dragX, dragY) => {
                         const isTouch = !!(pointer && (pointer.wasTouch || pointer.pointerType === 'touch'));
                         itemCont.x = pointer ? pointer.x : dragX;
-                        itemCont.y = (pointer ? pointer.y : dragY) + (isTouch ? -16 : 0);
+                        itemCont.y = (pointer ? pointer.y : dragY) + (isTouch ? -18 : 0);
                     });
                     itemCont.on('dragend', (pointer) => {
                         if (!this.arcadeBins || !this.arcadeState || !this.arcadeState.active) return;
@@ -5220,7 +5385,7 @@ const htmlContent = `<!DOCTYPE html>
                         let bestDist = Infinity;
                         for (const ab of this.arcadeBins) {
                             const d = Phaser.Math.Distance.Between(px, py, ab.x, ab.y);
-                            if (d < Math.max(78, ab.spacing * 0.85) && d < bestDist) {
+                            if (d < Math.max(82, ab.spacing * 0.85) && d < bestDist) {
                                 bestDist = d;
                                 bestBin = ab;
                             }
@@ -5233,7 +5398,7 @@ const htmlContent = `<!DOCTYPE html>
                     });
                 } else {
                     itemCont.setScale(0.85);
-                    itemCont.setAlpha(0.65 - (idx * 0.07));
+                    itemCont.setAlpha(0.70 - (idx * 0.08));
                 }
 
                 this.arcadeQueueContainer.add(itemCont);
@@ -5248,6 +5413,12 @@ const htmlContent = `<!DOCTYPE html>
             const isCorrect = (item.type === targetType);
 
             if (isCorrect) {
+                // Play the real bin lid animation!
+                const targetBin = this.arcadeBins && this.arcadeBins.find(b => b.id === targetType);
+                if (targetBin && targetBin.sprite && targetBin.sprite.scene && targetBin.sprite.anims && targetBin.animKey && this.anims && this.anims.exists(targetBin.animKey)) {
+                    try { targetBin.sprite.play(targetBin.animKey); } catch (e) {}
+                }
+
                 this.arcadeState.queue.shift();
                 const types = ['organic', 'paper', 'glass', 'plastic'];
                 const nextType = types[Math.floor(Math.random() * types.length)];
@@ -5260,7 +5431,9 @@ const htmlContent = `<!DOCTYPE html>
                 if (this.arcadeState.mode === 'dumpster') {
                     this.arcadeState.streak++;
                     this.arcadeState.sortedCount++;
-                    this.arcadeState.streakTimer = Math.min(3500, this.arcadeState.streakTimer + 1000);
+                    // Refill shrinks smoothly as speed escalates so high streaks reward real sorting speed & accuracy!
+                    const refill = Math.max(340, 800 - (this.arcadeState.sortedCount * 6));
+                    this.arcadeState.streakTimer = Math.min(this.arcadeState.streakMax, this.arcadeState.streakTimer + refill);
                     const best = Math.max(Number(localStorage.getItem('arrc_arcade_best_streak') || 0), this.arcadeState.streak);
                     localStorage.setItem('arrc_arcade_best_streak', best);
                 } else {
@@ -5285,29 +5458,39 @@ const htmlContent = `<!DOCTYPE html>
             this.renderArcadeQueue();
         }
 
-        updateArcade(delta) {
+        updateArcade() {
             if (!this.arcadeState || !this.arcadeState.active || this.arcadeState.gameOver) return;
 
+            // Always advance using wall-clock time so tabbing out NEVER pauses arcade timers!
+            const now = Date.now();
+            const realDelta = Math.max(0, now - (this.arcadeState.lastWallTime || now));
+            this.arcadeState.lastWallTime = now;
+
             const w = this.scale.width;
-            const h = this.scale.height;
+            const barY = this.arcadeBarY || 82;
 
             if (this.arcadeState.mode === 'dumpster') {
-                this.arcadeState.streakTimer -= delta;
+                const sc = this.arcadeState.sortedCount || 0;
+                // Progressive speed ramp: starts 1.0x, hits ~1.6x by 12, ~2.4x by 28, ~3.4x by 48, caps at 4.0x
+                const speedMult = 1 + Math.min(3.0, (sc * 0.04) + (Math.pow(sc / 40, 1.35) * 0.5));
+                this.arcadeState.speedMult = speedMult;
+
+                this.arcadeState.streakTimer -= (realDelta * speedMult);
                 if (this.arcadeState.streakTimer <= 0) {
+                    this.arcadeState.streakTimer = 0;
                     this.endArcade(false);
                     return;
                 }
 
                 if (this.arcadeStatsTxt) {
-                    this.arcadeStatsTxt.setText('🔥 STREAK: ' + this.arcadeState.streak + '  |  SORTED: ' + this.arcadeState.sortedCount);
+                    this.arcadeStatsTxt.setText('🔥 STREAK: ' + this.arcadeState.streak + '  |  SORTED: ' + sc + '  |  ⚡ ' + speedMult.toFixed(1) + 'x');
                 }
 
                 if (this.arcadeBarGfx) {
                     this.arcadeBarGfx.clear();
-                    const barW = Math.min(w * 0.7, 320);
+                    const barW = Math.min(w * 0.72, 340);
                     const barH = 12;
-                    const barX = (w - barW) / 2;
-                    const barY = 82;
+                    const barX = Math.round((w - barW) / 2);
                     const ratio = Math.max(0, this.arcadeState.streakTimer / this.arcadeState.streakMax);
 
                     this.arcadeBarGfx.fillStyle(0x222222, 0.9);
@@ -5318,7 +5501,7 @@ const htmlContent = `<!DOCTYPE html>
                     this.arcadeBarGfx.strokeRect(barX, barY, barW, barH);
                 }
             } else {
-                this.arcadeState.cleanupElapsed += delta;
+                this.arcadeState.cleanupElapsed += realDelta;
                 const totalSec = Math.floor(this.arcadeState.cleanupElapsed / 1000);
                 const m = Math.floor(totalSec / 60);
                 const s = totalSec % 60;
@@ -5330,10 +5513,9 @@ const htmlContent = `<!DOCTYPE html>
 
                 if (this.arcadeBarGfx) {
                     this.arcadeBarGfx.clear();
-                    const barW = Math.min(w * 0.7, 320);
+                    const barW = Math.min(w * 0.72, 340);
                     const barH = 12;
-                    const barX = (w - barW) / 2;
-                    const barY = 82;
+                    const barX = Math.round((w - barW) / 2);
                     const ratio = (500 - this.arcadeState.cleanupRemaining) / 500;
 
                     this.arcadeBarGfx.fillStyle(0x222222, 0.9);
@@ -5408,6 +5590,11 @@ const htmlContent = `<!DOCTYPE html>
                 this.arcadeContainer = null;
             }
             this.arcadeState.active = false;
+            if (this.activeBuses && this.activeBuses.length > 0) {
+                this.activeBuses.forEach(b => {
+                    if (b && b.active) b.setVisible(true);
+                });
+            }
             if (this.mainContainer) this.mainContainer.setVisible(true);
             this.requestLayoutRebuild();
         }
@@ -5479,6 +5666,12 @@ const htmlContent = `<!DOCTYPE html>
     }
 
     const initVp = getVisibleViewportSize();
+    const initContainer = document.getElementById('game-container');
+    if (initContainer) {
+        initContainer.style.width = initVp.width + 'px';
+        initContainer.style.height = initVp.height + 'px';
+    }
+
     const config = {
         type: Phaser.AUTO,
         parent: 'game-container',
@@ -5516,13 +5709,18 @@ const htmlContent = `<!DOCTYPE html>
             container.style.width = vp.width + 'px';
             container.style.height = vp.height + 'px';
         }
-        if (game && game.scale && (game.scale.width !== vp.width || game.scale.height !== vp.height)) {
+        // Only resize Phaser once its canvas & ScaleManager have finished booting!
+        if (game && game.isBooted && game.canvas && game.scale &&
+            (game.scale.width !== vp.width || game.scale.height !== vp.height)) {
             game.scale.resize(vp.width, vp.height);
         }
     }
     function scheduleViewportSync() {
         if (vpSyncTimer) clearTimeout(vpSyncTimer);
         vpSyncTimer = setTimeout(syncGameToVisibleViewport, 60);
+    }
+    if (game && game.events) {
+        game.events.once('ready', syncGameToVisibleViewport);
     }
     window.addEventListener('resize', scheduleViewportSync);
     window.addEventListener('orientationchange', () => {
@@ -5532,7 +5730,6 @@ const htmlContent = `<!DOCTYPE html>
     if (window.visualViewport) {
         window.visualViewport.addEventListener('resize', scheduleViewportSync);
     }
-    syncGameToVisibleViewport();
     </script>
 </body>
 </html>`;
