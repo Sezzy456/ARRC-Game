@@ -10,21 +10,63 @@
     <script src="phaser.min.js"></script>
     <script>if (typeof Phaser === 'undefined') { document.write('<script src="https://cdn.jsdelivr.net/npm/phaser@3.70.0/dist/phaser.min.js"><\/script>'); }</script>
     <style>
+        :root {
+            --sat: env(safe-area-inset-top, 0px);
+            --sab: env(safe-area-inset-bottom, 0px);
+            --sal: env(safe-area-inset-left, 0px);
+            --sar: env(safe-area-inset-right, 0px);
+        }
         * { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; touch-action: none; box-sizing: border-box; }
         html, body {
-            margin: 0; padding: 0; width: 100vw; height: 100vh;
+            margin: 0; padding: 0;
+            position: fixed; inset: 0;
+            width: 100%; height: 100%;
+            height: 100dvh;
             background-color: #121824; overflow: hidden;
+            overscroll-behavior: none;
             display: flex; justify-content: center; align-items: center;
             font-family: 'Outfit', 'Inter', system-ui, -apple-system, sans-serif;
             -webkit-font-smoothing: antialiased;
         }
-        #game-container { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; }
+        #game-container {
+            width: 100%; height: 100%;
+            position: relative;
+            overflow: hidden;
+            display: flex; justify-content: center; align-items: center;
+        }
+        #game-container canvas {
+            display: block;
+            touch-action: none;
+        }
     </style>
 </head>
 <body>
     <div id="game-container"></div>
 
     <script>
+    function getSafeInsets() {
+        const out = { top: 0, bottom: 0, left: 0, right: 0 };
+        try {
+            const cs = getComputedStyle(document.documentElement);
+            const parsePx = (v) => {
+                const n = parseFloat(v);
+                return Number.isFinite(n) ? Math.max(0, Math.min(64, Math.round(n))) : 0;
+            };
+            out.top = parsePx(cs.getPropertyValue('--sat'));
+            out.bottom = parsePx(cs.getPropertyValue('--sab'));
+            out.left = parsePx(cs.getPropertyValue('--sal'));
+            out.right = parsePx(cs.getPropertyValue('--sar'));
+        } catch (e) {}
+        return out;
+    }
+
+    function getVisibleViewportSize() {
+        const vv = window.visualViewport;
+        const w = Math.floor(vv ? vv.width : (window.innerWidth || document.documentElement.clientWidth || 800));
+        const h = Math.floor(vv ? vv.height : (window.innerHeight || document.documentElement.clientHeight || 600));
+        return { width: Math.max(280, w), height: Math.max(300, h) };
+    }
+
     // Global Error Handler for immediate visual feedback
     window.onerror = function(msg, url, lineNo, columnNo, error) {
         var errDiv = document.getElementById('game-err-banner');
@@ -447,6 +489,26 @@
         create() {
             this.scale.on('resize', this.handleResize, this);
 
+            // Immediate, responsive touch & mouse dragging
+            this.input.dragDistanceThreshold = 0;
+            this.input.dragTimeThreshold = 0;
+            this.input.topOnly = true;
+
+            // Safely recover from interrupted touch gestures (edge swipes, OS overlays, pointer leaving canvas)
+            this.input.on('pointerupoutside', () => {
+                if (this.draggedItem) this.cancelActiveDrag();
+            });
+            this.input.on('gameout', () => {
+                if (this.draggedItem && this.input.activePointer && !this.input.activePointer.isDown) {
+                    this.cancelActiveDrag();
+                }
+            });
+            if (typeof window !== 'undefined') {
+                window.addEventListener('pointercancel', () => {
+                    if (this.draggedItem) this.cancelActiveDrag();
+                });
+            }
+
             // Register bin spritesheets & animations reliably using browser Image
             const registerBinSheet = (sheetKey, animKey, b64Data) => {
                 if (!b64Data) return;
@@ -471,9 +533,10 @@
                         });
                         if (this.bins) {
                             const bObj = this.bins.find(b => b.sheetKey === sheetKey);
-                            if (bObj && bObj.sprite) {
+                            if (bObj && bObj.sprite && bObj.sprite.scene) {
                                 bObj.sprite.setTexture(sheetKey, 0);
-                                bObj.sprite.setScale(BIN_SPRITE_CONFIG.scale);
+                                bObj.sprite.setOrigin(0.5, 1);
+                                bObj.sprite.setScale(bObj.baseScale || this.currentBinSpriteScale || BIN_SPRITE_CONFIG.scale);
                             }
                         }
                     } catch (err) {
@@ -825,10 +888,10 @@
             if (!hasStreakLine) return;
 
             // Center streak timer bar directly below the streak badge
-            const barW = 160;
-            const barH = 6;
+            const barW = Math.min(160, Math.max(110, (this.scale ? this.scale.width : 360) - 40));
+            const barH = 5;
             const barX = this.dumpsterStreakText.x - (barW / 2);
-            const barY = this.dumpsterStreakText.y + 14;
+            const barY = this.dumpsterStreakText.y + 11;
 
             // Background slot
             this.dumpsterBarGfx.fillStyle(0x1f2937, 0.9);
@@ -863,14 +926,18 @@
         repositionCustomerQueue() {
             if (!this.gatePos || !this.customerQueue) return;
             const count = this.customerQueue.length;
-            const isMobile = (this.scale && this.scale.height > this.scale.width && this.scale.width < 600) || (this.scale && this.scale.width < 520);
+            const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
+            const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
+            const isMobile = (height > width && width < 640) || width < 560;
+            const gateSz = this.currentGateSize || 62;
+            const custScale = this.layoutMetrics ? this.layoutMetrics.gateScale : 1;
 
             // Customer 0 stands on the left outside the gate entrance
-            const gateOffset = isMobile ? 44 : 48;
+            const gateOffset = Math.round(gateSz * 0.5) + (isMobile ? 16 : 20);
             const startX = this.gatePos.x - gateOffset;
-            const minMargin = isMobile ? 12 : 16;
-            const availableW = Math.max(60, startX - minMargin);
-            const maxSpacing = isMobile ? 24 : 28;
+            const minMargin = (this.layoutMetrics ? this.layoutMetrics.safeLeft : 0) + (isMobile ? 14 : 18);
+            const availableW = Math.max(50, startX - minMargin);
+            const maxSpacing = isMobile ? 22 : 28;
             const spacing = count > 1 ? Math.min(maxSpacing, availableW / (count - 1)) : maxSpacing;
 
             const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
@@ -880,6 +947,7 @@
                 const targetX = Math.round(startX - (idx * spacing));
                 cust.setAlpha(1);
                 cust.setVisible(true);
+                cust.setScale(custScale);
                 cust.setDepth(15 + (count - idx));
 
                 if (!isHidden && this.tweens) {
@@ -947,9 +1015,9 @@
 
                     this.tweens.add({
                         targets: cust,
-                        y: cust.y + 60,
+                        y: cust.y + 28,
                         alpha: 0,
-                        duration: 220,
+                        duration: 200,
                         onComplete: () => cust.destroy()
                     });
                 } else {
@@ -1048,6 +1116,7 @@
         triggerSanitiseAction() {
             if (!this.state.unlockedSanitiser || (this.state.sanitiserCooldown || 0) > 0 || this.trashQueue.length === 0) return;
             const headItem = this.trashQueue[0];
+            if (this.draggedItem === headItem) this.cancelActiveDrag();
             const currentMult = headItem.multiplier || 1;
 
             if (currentMult < 4) {
@@ -1061,7 +1130,6 @@
                 newContainer.setPosition(headItem.container.x, headItem.container.y);
                 headItem.container.destroy();
                 headItem.container = newContainer;
-                if (this.mainContainer) this.mainContainer.add(newContainer);
 
                 this.state.sanitiserMaxCooldown = 5000;
                 this.state.sanitiserCooldown = 5000;
@@ -1079,6 +1147,10 @@
                 if (idx < 10 && item.type === typeId) matchingIndices.push(idx);
             });
             if (matchingIndices.length === 0) return;
+
+            if (this.draggedItem && this.draggedItem.type === typeId) {
+                this.cancelActiveDrag();
+            }
 
             let totalTokens = 0;
             for (let i = matchingIndices.length - 1; i >= 0; i--) {
@@ -1166,9 +1238,10 @@
             if (activeCount >= 3) return;
 
             const w = this.scale.width;
-            const y = this.busY || (this.scale.height - 40);
+            const y = this.busY || (this.scale.height - 60);
+            const busScale = this.busScale || 1;
 
-            const busContainer = this.add.container(-140, y).setDepth(200);
+            const busContainer = this.add.container(-140, y).setDepth(200).setScale(busScale);
             this.activeBusContainer = busContainer;
             this.activeBuses.push(busContainer);
             
@@ -1190,14 +1263,15 @@
             busGfx.fillCircle(-39, 22, 7);
             busGfx.fillCircle(39, 22, 7);
 
-            const labelText = this.add.text(0, 9, '🚌 +10 (TAP/B)', {
+            const isMobileBus = (this.scale.height > this.scale.width && this.scale.width < 640) || this.scale.width < 560;
+            const labelText = this.add.text(0, 9, isMobileBus ? '🚌 +10 (TAP)' : '🚌 +10 (TAP/B)', {
                 fontSize: '11px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
             busContainer.add([busGfx, labelText]);
 
-            // Generous touch hit area (170px wide x 80px tall), perfectly centered directly on the 126x44 visual bus
-            busContainer.setSize(170, 80);
+            // Generous touch hit area (180px wide x 88px tall), perfectly centered directly on the 126x44 visual bus
+            busContainer.setSize(180, 88);
             busContainer.setInteractive({
                 useHandCursor: true
             });
@@ -1214,8 +1288,9 @@
                 }
                 this.updateUI();
 
-                const floatTxt = this.add.text(busContainer.x, busContainer.y - 20, '🚌 +10 RUBBISH ON CONVEYOR! 🚌', {
-                    fontSize: '15px', style: 'bold', color: '#ff9800', backgroundColor: '#000000', padding: 6
+                const popX = Phaser.Math.Clamp(busContainer.x, 115, Math.max(115, this.scale.width - 115));
+                const floatTxt = this.add.text(popX, busContainer.y - 24, '🚌 +10 RUBBISH ON CONVEYOR!', {
+                    fontSize: isMobileBus ? '12px' : '15px', style: 'bold', color: '#ff9800', backgroundColor: '#000000', padding: 6
                 }).setOrigin(0.5).setDepth(230);
 
                 const removeBus = () => {
@@ -1380,6 +1455,13 @@
         }
 
         createBuyerContainer(customer, slotIndex, walkY, startX) {
+            const metrics = this.getShopLayoutMetrics(this.scale ? this.scale.width : window.innerWidth);
+            const bubbleW = metrics.bubbleW || 76;
+            const halfBW = Math.round(bubbleW / 2);
+            const shopScale = metrics.shopScale || 1;
+            const btnOffsetX = Math.max(13, Math.round(bubbleW * 0.22));
+            const isNarrowBubble = bubbleW < 68;
+
             const person = this.add.sprite(0, 0, 'person').setOrigin(0.5, 0.5);
 
             const haveTokens = this.getCurrentBuyerTokens(customer);
@@ -1387,57 +1469,64 @@
 
             const bubbleGfx = this.add.graphics();
             bubbleGfx.fillStyle(0x0f172a, 0.95);
-            bubbleGfx.fillRoundedRect(-38, -68, 76, 46, 5);
+            bubbleGfx.fillRoundedRect(-halfBW, -68, bubbleW, 46, 5);
             bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
-            bubbleGfx.strokeRoundedRect(-38, -68, 76, 46, 5);
+            bubbleGfx.strokeRoundedRect(-halfBW, -68, bubbleW, 46, 5);
             bubbleGfx.fillStyle(0x0f172a, 0.95);
             bubbleGfx.fillTriangle(-4, -22, 4, -22, 0, -17);
             bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
             bubbleGfx.lineBetween(-4, -22, 0, -17);
             bubbleGfx.lineBetween(0, -17, 4, -22);
 
-            // Top line: Item icon + amount requested in larger font
+            // Top line: Item icon + amount requested
             const orderTxt = this.add.text(0, -56, customer.order.icon + ' x' + customer.order.qty, {
-                fontSize: '12px', style: 'bold', color: '#ffca28'
+                fontSize: isNarrowBubble ? '11px' : '12px', style: 'bold', color: '#ffca28'
             }).setOrigin(0.5);
 
             // Second line: Amount they'll pay below it
             const rewardTxt = this.add.text(0, -42, '+$' + customer.order.rewardCash, {
-                fontSize: '10px', style: 'bold', color: '#4ade80'
+                fontSize: isNarrowBubble ? '9.5px' : '10px', style: 'bold', color: '#4ade80'
             }).setOrigin(0.5);
 
-            // Action buttons: Tick on left (-16), Cross on right (+16)
-            const btnAccept = this.add.text(-16, -28, '✓', {
+            // Action buttons: Tick on left, Cross on right, with generous mobile touch zones
+            const btnAccept = this.add.text(-btnOffsetX, -28, '✓', {
                 fontSize: '11px', style: 'bold',
                 backgroundColor: canAfford ? '#15803d' : '#334155',
                 color: canAfford ? '#ffffff' : '#9ca3af',
                 padding: { x: 5, y: 1 }
             }).setOrigin(0.5);
 
-            const btnReject = this.add.text(16, -28, '✕', {
+            const btnReject = this.add.text(btnOffsetX, -28, '✕', {
                 fontSize: '11px', style: 'bold',
                 backgroundColor: '#b91c1c',
                 color: '#ffffff',
                 padding: { x: 5, y: 1 }
-            }).setOrigin(0.5).setInteractive({ useHandCursor: true });
+            }).setOrigin(0.5);
+
+            const hitW = Math.max(24, Math.floor(bubbleW * 0.48));
+            const acceptHit = this.add.zone(-btnOffsetX, -28, hitW, 24).setOrigin(0.5);
+            const rejectHit = this.add.zone(btnOffsetX, -28, hitW, 24).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
             if (canAfford) {
-                btnAccept.setInteractive({ useHandCursor: true });
+                acceptHit.setInteractive({ useHandCursor: true });
             }
 
-            btnAccept.on('pointerup', () => this.fulfillBuyerOrder(customer));
-            btnReject.on('pointerup', () => this.rejectBuyerOrder(customer));
+            acceptHit.on('pointerup', () => this.fulfillBuyerOrder(customer));
+            rejectHit.on('pointerup', () => this.rejectBuyerOrder(customer));
 
             const custContainer = this.add.container(startX, walkY, [
-                person, bubbleGfx, orderTxt, rewardTxt, btnAccept, btnReject
-            ]).setDepth(15);
+                person, bubbleGfx, orderTxt, rewardTxt, btnAccept, btnReject, acceptHit, rejectHit
+            ]).setDepth(15).setScale(shopScale);
 
             customer.container = custContainer;
             customer.bubbleGfx = bubbleGfx;
+            customer.bubbleW = bubbleW;
             customer.orderTxt = orderTxt;
             customer.rewardTxt = rewardTxt;
             customer.btnAccept = btnAccept;
             customer.btnReject = btnReject;
+            customer.acceptHit = acceptHit;
+            customer.rejectHit = rejectHit;
 
             if (this.mainContainer) {
                 this.mainContainer.add(custContainer);
@@ -1451,6 +1540,8 @@
                 const haveTokens = this.getCurrentBuyerTokens(cust);
                 const reqTokens = cust.order.qty;
                 const canAfford = haveTokens >= reqTokens;
+                const bubbleW = cust.bubbleW || 76;
+                const halfBW = Math.round(bubbleW / 2);
 
                 if (cust.orderTxt) {
                     cust.orderTxt.setText(cust.order.icon + ' x' + cust.order.qty);
@@ -1463,9 +1554,9 @@
                 if (cust.bubbleGfx) {
                     cust.bubbleGfx.clear();
                     cust.bubbleGfx.fillStyle(0x0f172a, 0.95);
-                    cust.bubbleGfx.fillRoundedRect(-38, -68, 76, 46, 5);
+                    cust.bubbleGfx.fillRoundedRect(-halfBW, -68, bubbleW, 46, 5);
                     cust.bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
-                    cust.bubbleGfx.strokeRoundedRect(-38, -68, 76, 46, 5);
+                    cust.bubbleGfx.strokeRoundedRect(-halfBW, -68, bubbleW, 46, 5);
                     cust.bubbleGfx.fillStyle(0x0f172a, 0.95);
                     cust.bubbleGfx.fillTriangle(-4, -22, 4, -22, 0, -17);
                     cust.bubbleGfx.lineStyle(1.5, canAfford ? 0x22c55e : 0x38bdf8, 1);
@@ -1478,10 +1569,12 @@
                         backgroundColor: canAfford ? '#15803d' : '#334155',
                         color: canAfford ? '#ffffff' : '#9ca3af'
                     });
+                }
+                if (cust.acceptHit) {
                     if (canAfford) {
-                        cust.btnAccept.setInteractive({ useHandCursor: true });
+                        cust.acceptHit.setInteractive({ useHandCursor: true });
                     } else {
-                        if (cust.btnAccept.input) cust.btnAccept.disableInteractive();
+                        if (cust.acceptHit.input) cust.acceptHit.disableInteractive();
                     }
                 }
             });
@@ -1490,28 +1583,40 @@
         getShopLayoutMetrics(w) {
             const width = (this.scale && this.scale.width) ? this.scale.width : (w || window.innerWidth || 800);
             const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
-            const isMobile = (height > width && width < 600) || width < 560;
+            const lm = this.layoutMetrics;
+            const safeLeft = lm ? lm.safeLeft : 0;
+            const safeRight = lm ? lm.safeRight : 0;
+            const shopScale = lm ? lm.shopScale : 1;
+            const isMobile = (height > width && width < 640) || width < 560;
 
-            const bw = isMobile ? (width < 380 ? 54 : 60) : 72;
-            const bh = isMobile ? 48 : 56;
+            const usableW = Math.max(280, width - safeLeft - safeRight);
 
             if (isMobile) {
-                // On mobile, the customers, store, and factory share the horizontal space across the screen
-                const rightMargin = 8;
-                const buildingGap = 8;
-                const factoryX = Math.round(width - rightMargin - (bw / 2));
+                // Fit 3 buyers + Store + Factory cleanly side-by-side with zero overlap or edge clipping
+                const sideMargin = 6;
+                const buildingGap = 6;
+                const bw = Math.round(Math.min(58, Math.max(46, usableW * 0.145)));
+                const bh = Math.round(46 * shopScale);
+
+                const factoryX = Math.round(width - safeRight - sideMargin - (bw / 2));
                 const storeX = Math.round(factoryX - bw - buildingGap);
 
                 const storeLeft = storeX - (bw / 2);
-                const leftMargin = 8;
-                const queueW = storeLeft - leftMargin;
+                const queueLeft = safeLeft + sideMargin;
+                const queueRight = storeLeft - 6;
+                const queueW = Math.max(150, queueRight - queueLeft);
 
-                // 3 slots (0, 1, 2) distributed across the left horizontal space
-                const slotSpacing = Math.min(84, Math.max(60, Math.floor((queueW - 36) / 2)));
-                const cust0X = Math.round(storeLeft - 32);
+                const slotPitch = Math.floor(queueW / 3);
+                const bubbleW = Math.min(76, Math.max(54, Math.floor((slotPitch - 4) / shopScale)));
+                const halfScaledBubble = Math.round((bubbleW * shopScale) / 2);
+
+                const slot2X = Math.round(queueLeft + halfScaledBubble);
+                const slot0X = Math.round(queueRight - halfScaledBubble);
+                const slotSpacing = Math.max(Math.round(bubbleW * shopScale) + 2, Math.floor((slot0X - slot2X) / 2));
+                const cust0X = slot0X;
 
                 return {
-                    bw, bh,
+                    bw, bh, bubbleW, shopScale,
                     storeX,
                     factoryX,
                     cust0X,
@@ -1519,14 +1624,22 @@
                     getSlotX: (idx) => Math.round(cust0X - (idx * slotSpacing))
                 };
             } else {
-                const pageCenter = Math.round(width / 2);
-                const storeX = Math.round(pageCenter + 45);
-                const factoryX = Math.round(storeX + bw + 28);
-                const slotSpacing = 84;
-                const cust0X = Math.round(storeX - (bw / 2) - 44);
+                const bw = Math.round(72 * shopScale);
+                const bh = Math.round(56 * shopScale);
+                const bubbleW = 76;
+                const slotSpacing = Math.round(84 * shopScale);
+                const buildingGap = Math.round(24 * shopScale);
+                const storeGap = Math.round(44 * shopScale);
+                // Center the whole shop + 3-buyer group cleanly inside usableW
+                const totalGroupW = (2 * slotSpacing) + Math.round(bubbleW * shopScale) + storeGap + (2 * bw) + buildingGap;
+                const groupLeft = Math.round(safeLeft + Math.max(12, (usableW - totalGroupW) / 2));
+                const slot2X = groupLeft + Math.round((bubbleW * shopScale) / 2);
+                const cust0X = slot2X + (2 * slotSpacing);
+                const storeX = cust0X + storeGap + Math.round(bw / 2);
+                const factoryX = storeX + bw + buildingGap;
 
                 return {
-                    bw, bh,
+                    bw, bh, bubbleW, shopScale,
                     storeX,
                     factoryX,
                     cust0X,
@@ -1547,7 +1660,7 @@
 
             const slotIndex = this.shopCustomers.length;
             const targetX = this.getShopQueueSlotX(slotIndex);
-            const walkY = (this.splitY || 240) - 20;
+            const walkY = this.shopWalkY || ((this.splitY || 240) - 24);
 
             const orderData = this.generateBuyerOrderData();
             const customer = {
@@ -1676,18 +1789,168 @@
             });
         }
 
+        computeLayoutMetrics(width, height) {
+            const insets = (typeof getSafeInsets === 'function') ? getSafeInsets() : { top: 0, bottom: 0, left: 0, right: 0 };
+            const safeTop = insets.top || 0;
+            const safeBottom = insets.bottom || 0;
+            const safeLeft = insets.left || 0;
+            const safeRight = insets.right || 0;
+
+            const usableTop = safeTop;
+            const usableBottom = height - safeBottom;
+            const usableH = Math.max(300, usableBottom - usableTop);
+            const usableW = Math.max(280, width - safeLeft - safeRight);
+
+            const isPortrait = height > width;
+            const isMobile = (isPortrait && width < 640) || width < 560;
+            const isShortLandscape = !isPortrait && usableH < 520;
+            const isShortHeight = usableH < 660;
+            const isSmallScreen = usableH < 680 || width < 400;
+
+            const hasExtraTypes = !!(this.state && this.state.unlockedTypes && (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric));
+            const topBarY = usableTop + (isShortLandscape ? 4 : (isMobile ? 8 : 14));
+
+            // 1. Header zone height (XP bar + HUD card + Nav buttons)
+            let hudCardY, hudCardH, hudBottomY, navY, navH, headerBottomY;
+            if (isMobile) {
+                hudCardY = topBarY + 22;
+                hudCardH = hasExtraTypes ? 68 : 54;
+                hudBottomY = hudCardY + hudCardH;
+                navY = hudBottomY + 5;
+                navH = 28;
+                headerBottomY = navY + navH;
+            } else {
+                hudCardY = topBarY;
+                hudCardH = hasExtraTypes ? (isShortLandscape ? 58 : 68) : (isShortLandscape ? 48 : 56);
+                hudBottomY = hudCardY + hudCardH;
+                navY = topBarY;
+                navH = isShortLandscape ? 24 : 86;
+                headerBottomY = Math.max(hudBottomY, topBarY + navH);
+            }
+
+            // 2. Determine shop scale & minimum sky height so buyer bubbles NEVER touch the header
+            const shopScale = isShortLandscape ? Math.max(0.62, Math.min(0.84, usableH / 520)) : (usableH < 600 ? 0.90 : 1.0);
+            const shopClearH = Math.round(90 * shopScale);
+            const minSplitY = headerBottomY + shopClearH + (isShortLandscape ? 2 : 8);
+
+            // 3. Determine whether toolbar has active buttons
+            const hasPets = this.state && this.state.pets && Object.values(this.state.pets).some(Boolean);
+            const hasToolbarItems = !!(this.state && (this.state.unlockedSanitiser || hasPets || this.state.unlockedAutoSort));
+
+            // 4. Ideal bottom-half band heights (at scale 1.0)
+            const baseToolbarPad = 6;
+            const baseToolbarH = hasToolbarItems ? 28 : 8;
+            const baseGapToolbarToQueue = hasToolbarItems ? 8 : 4;
+            const baseQueueH = 56; // 52px item + highlight border
+            const baseGapQueueToBinLabel = 12;
+            const baseBinLabelH = 14;
+            const baseBinH = isShortHeight ? 68 : 80;
+            const baseGapBinToStreak = 12;
+            const baseStreakH = 26; // badge (18) + gap + timer bar (6)
+            const baseGapStreakToGateLabel = 8;
+            const baseGateLabelH = 14;
+            const baseGateH = isShortHeight ? 54 : 62;
+            const baseGapGateToBus = 16;
+            const baseBusH = 52; // body 44 + wheels 7
+            const baseBottomPad = 10;
+
+            const idealBottomH = baseToolbarPad + baseToolbarH + baseGapToolbarToQueue +
+                baseQueueH + baseGapQueueToBinLabel + baseBinLabelH + baseBinH +
+                baseGapBinToStreak + baseStreakH + baseGapStreakToGateLabel +
+                baseGateLabelH + baseGateH + baseGapGateToBus + baseBusH + baseBottomPad;
+
+            const maxAvailBottomH = Math.max(180, usableBottom - minSplitY);
+            const vScale = Math.max(0.42, Math.min(1.0, maxAvailBottomH / idealBottomH));
+
+            // 5. Place horizon splitY cleanly so BOTH top half and bottom half have generous space
+            const neededBottomH = Math.round(idealBottomH * vScale);
+            const targetSplitY = Math.round(usableTop + usableH * (isPortrait ? 0.41 : 0.42));
+            const maxSplitY = Math.max(minSplitY, usableBottom - neededBottomH);
+            const splitY = Phaser.Math.Clamp(targetSplitY, minSplitY, maxSplitY);
+
+            // 6. Compute exact non-overlapping Y positions for every element below splitY
+            const tight = vScale < 0.7;
+            const s = (v, minVal = 2) => Math.max(tight ? Math.min(minVal, Math.max(2, Math.floor(v * vScale))) : minVal, Math.round(v * vScale));
+            const queueScale = Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.95 : 1.06)));
+            const gateScale = Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.95 : 1.05)));
+            const busScale = Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.92 : 1.05)));
+
+            const toolbarY = splitY + s(baseToolbarPad, 3);
+            const toolbarH = hasToolbarItems ? s(baseToolbarH, tight ? 16 : 22) : s(baseToolbarH, 4);
+            const queueHalfH = Math.round((baseQueueH * queueScale) / 2);
+            const queueY = toolbarY + toolbarH + s(baseGapToolbarToQueue, 3) + queueHalfH;
+
+            const binLabelH = s(baseBinLabelH, tight ? 9 : 10);
+            const binLabelY = queueY + queueHalfH + s(baseGapQueueToBinLabel, tight ? 4 : 6) + Math.round(binLabelH / 2);
+            const binTopY = binLabelY + Math.round(binLabelH / 2) + (tight ? 2 : 3);
+            const binH = s(baseBinH, tight ? 32 : 44);
+            const binBaselineY = binTopY + binH;
+            const binCenterY = Math.round(binTopY + (binH / 2));
+
+            const streakY = binBaselineY + s(baseGapBinToStreak, tight ? 5 : 7) + (tight ? 4 : 6);
+            const streakBottomY = streakY + s(20, tight ? 10 : 14);
+
+            const gateSize = s(baseGateH, tight ? 28 : 38);
+            const gateLabelH = s(baseGateLabelH, tight ? 8 : 10);
+            const gateLabelY = streakBottomY + s(baseGapStreakToGateLabel, tight ? 3 : 4) + Math.round(gateLabelH / 2);
+            const gateY = gateLabelY + Math.round(gateLabelH / 2) + Math.round(gateSize / 2) + (tight ? 2 : 3);
+            const gateBottomY = gateY + Math.round(gateSize / 2);
+
+            // 7. BUS ROAD LANE: Centered cleanly BETWEEN the bottom of the gate and the bottom of the visible viewport!
+            // Never clipped by browser toolbars or gesture bars on Flip 4 / A80 / iPhone.
+            const busTopHalf = Math.round(23 * busScale);
+            const busBottomHalf = Math.round(30 * busScale); // includes wheel radius (22 + 7)
+            const busMinY = gateBottomY + s(10, tight ? 2 : 4) + busTopHalf;
+            const busMaxY = usableBottom - Math.max(tight ? 3 : 8, Math.round(10 * busScale)) - busBottomHalf;
+            const busMidY = Math.round((gateBottomY + usableBottom) / 2);
+            const busY = (busMinY <= busMaxY)
+                ? Phaser.Math.Clamp(busMidY, busMinY, busMaxY)
+                : Math.round(Math.min(usableBottom - busBottomHalf - 1, Math.max(gateBottomY + busTopHalf + 1, busMidY)));
+
+            return {
+                width, height, usableW, usableH,
+                safeTop, safeBottom, safeLeft, safeRight, usableTop, usableBottom,
+                isPortrait, isMobile, isShortLandscape, isSmallScreen,
+                topBarY, hudCardY, hudCardH, hudBottomY, navY, navH, headerBottomY,
+                shopScale, vScale, queueScale, gateScale, busScale,
+                splitY, toolbarY, toolbarH, hasToolbarItems,
+                queueY, queueHalfH,
+                binLabelY, binTopY, binH, binBaselineY, binCenterY,
+                streakY, streakBottomY,
+                gateLabelY, gateY, gateSize, gateBottomY,
+                busY
+            };
+        }
+
         handleResize(gameSize) {
             if (this.cameras && this.cameras.main) {
                 this.cameras.main.setSize(gameSize.width, gameSize.height);
                 this.cameras.main.setViewport(0, 0, gameSize.width, gameSize.height);
             }
             this.layoutRebuildPending = false;
+            const reopenedModal = this.activeModal;
+            const reopenedCat = this.activeUpgradeCategory || 'gate';
             this.buildLayout();
+            if (reopenedModal) {
+                this.openModal(reopenedModal, reopenedCat, true);
+            }
+            if (this.arcadeState && this.arcadeState.active && !this.arcadeState.gameOver) {
+                this.renderArcadeQueue();
+            }
         }
 
         buildLayout() {
+            if (this.draggedItem) {
+                this.draggedItem = null;
+                this.hoveredDropBin = null;
+            }
+            if (this.dragLayer) {
+                this.dragLayer.destroy(true);
+                this.dragLayer = null;
+            }
             if (this.mainContainer) this.mainContainer.destroy(true);
             this.mainContainer = this.add.container(0, 0).setDepth(10);
+            this.dragLayer = this.add.container(0, 0).setDepth(95);
 
             // Cleanly reset trash container references so they are rebuilt at exact new scale and positions
             if (this.trashQueue) {
@@ -1701,52 +1964,45 @@
 
             const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
             const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
-            const isMobile = (height > width && width < 600) || width < 520;
-            const isSmallScreen = height < 680;
+            const lm = this.computeLayoutMetrics(width, height);
+            this.layoutMetrics = lm;
 
-            const topBarY = isMobile ? 12 : ((height < 600) ? 24 : 30);
-            const questY = topBarY + (isSmallScreen ? 55 : 68);
+            const isMobile = lm.isMobile;
+            const isSmallScreen = lm.isSmallScreen;
+            const topBarY = lm.topBarY;
+            const splitY = lm.splitY;
+            const toolbarY = lm.toolbarY;
+            const queueY = lm.queueY;
+            this.queueY = queueY;
+            const binH = lm.binH;
+            const binTopY = lm.binTopY;
+            const binBaselineY = lm.binBaselineY;
+            const binCenterY = lm.binCenterY;
+            const streakY = lm.streakY;
+            const streakX = Math.round(width / 2);
+            const busY = lm.busY;
+            this.busY = busY;
+            this.busScale = lm.busScale;
+            this.currentGateSize = lm.gateSize;
+            const bottomY = lm.gateY;
+
+            // Keep any currently driving buses aligned in the updated bus lane
+            if (this.activeBuses && this.activeBuses.length > 0) {
+                this.activeBuses.forEach(b => {
+                    if (b && b.active) {
+                        b.y = busY;
+                        b.setScale(lm.busScale);
+                    }
+                });
+            }
 
             if (this.lvlUpText && this.lvlUpText.active) {
                 this.lvlUpText.setPosition(width / 2, height / 2);
             }
 
             if (this.state.tutorial.active && this.state.tutorial.step > 0) {
-                const tutY = isMobile ? 160 : (questY + 95);
+                const tutY = Math.round(lm.headerBottomY + Math.max(24, (splitY - Math.round(90 * lm.shopScale) - lm.headerBottomY) / 2));
                 this.renderTutorialBanner(width, tutY);
-            }
-
-            // HORIZON LINE (splitY): Moved up by the store's vertical height (44px) from the 50% midpoint
-            // Store, walking customers, and factory sit cleanly above this line
-            const splitY = Math.round(height * 0.50) - 44;
-
-            // TOOLBAR: Sanitiser & Pet helper buttons positioned neatly in the upper dirt band
-            const toolbarY = splitY + (isSmallScreen ? 8 : 10);
-
-            // CONVEYOR QUEUE ROW: Center-aligned queue sitting cleanly below the toolbar buttons
-            const queueY = splitY + (isSmallScreen ? 62 : 70);
-            this.queueY = queueY;
-
-            // BINS ROW: Prominently spaced beneath the conveyor so rubbish never clips bin titles
-            const binH = isSmallScreen ? 64 : 80;
-            const binBaselineY = queueY + (isSmallScreen ? 56 : 64) + binH;
-            const binCenterY = binBaselineY - (binH / 2);
-
-            // STREAK & HIGHSCORE: Centered directly under the bins!
-            const streakY = binBaselineY + (isSmallScreen ? 15 : 20);
-            const streakX = Math.round(width / 2);
-
-            // BUS ROAD LANE: Runs along the bottom in its own clear road with visible wheels
-            const busY = height - (isSmallScreen ? 32 : 34);
-            this.busY = busY;
-
-            // GATE ROW: Sits below the streak/bins
-            let bottomY;
-            if (isMobile) {
-                // Position gate a bit below the streak to allow enough room for the bus to exist
-                bottomY = streakY + (isSmallScreen ? 24 : 28);
-            } else {
-                bottomY = streakY + (height < 530 ? 24 : (isSmallScreen ? 28 : 36));
             }
 
             if (this.skyGfx) this.skyGfx.destroy();
@@ -1757,22 +2013,15 @@
             this.skyGfx.fillStyle(0x64b5f6, 1);
             this.skyGfx.fillRect(0, 0, width, splitY);
             this.skyGfx.fillStyle(0x90caf9, 0.45);
-            this.skyGfx.fillRect(0, splitY - 45, width, 45);
+            this.skyGfx.fillRect(0, Math.max(0, splitY - 45), width, Math.min(45, splitY));
 
             if (this.clouds) {
                 this.clouds.forEach(c => {
                     c.setDepth(1);
-                    if (isMobile) {
-                        const minCloudY = 142;
-                        const maxCloudY = Math.max(minCloudY + 15, splitY - 55);
-                        if (c.y < minCloudY || c.y > maxCloudY) {
-                            c.y = Phaser.Math.Between(minCloudY, maxCloudY);
-                        }
-                    } else {
-                        const maxCloudY = Math.min(85, splitY - 50);
-                        if (c.y > maxCloudY || c.y < 20) {
-                            c.y = Phaser.Math.Between(24, maxCloudY);
-                        }
+                    const minCloudY = lm.headerBottomY + 14;
+                    const maxCloudY = Math.max(minCloudY + 12, splitY - Math.round(55 * lm.shopScale));
+                    if (c.y < minCloudY || c.y > maxCloudY) {
+                        c.y = Phaser.Math.Between(minCloudY, maxCloudY);
                     }
                 });
             }
@@ -1823,9 +2072,15 @@
             // Render decorations AFTER the environment so they are never covered up!
             this.renderDecorationsGraphics(width, height, splitY);
 
-            const activeBinCount = Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length;
-            const binSpacing = Math.min(Math.floor((width - 30) / activeBinCount), isSmallScreen ? 74 : 88);
-            const startBinX = Math.round((width - (binSpacing * (activeBinCount - 1))) / 2);
+            const activeBinCount = Math.max(1, Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length);
+            const binSideMargin = isMobile ? 8 : 16;
+            const binAvailW = Math.max(240, lm.usableW - (2 * binSideMargin));
+            const maxBinSpacing = isSmallScreen ? 86 : 96;
+            const binSpacing = Math.min(Math.floor(binAvailW / activeBinCount), maxBinSpacing);
+            const startBinX = Math.round(lm.safeLeft + (lm.usableW - (binSpacing * (activeBinCount - 1))) / 2);
+            this.currentBinSpacing = binSpacing;
+            this.currentBinTopY = binTopY;
+            this.currentBinBaselineY = binBaselineY;
 
             this.renderCenteredXPBar(width, topBarY);
             const hudBottomY = this.renderTopHUDBar(width, topBarY, isMobile);
@@ -1835,30 +2090,33 @@
             this.renderMeadowShopLine(width, splitY);
 
             // 3. QUEUE ROW (Center aligned with equal padding on left and right sides)
-            const minPad = isMobile ? 12 : 20;
-            const baseGap = 56;
-            const availAssemblyW = width - (2 * minPad);
-            const availQueueSpan = Math.max(140, availAssemblyW - 84);
+            const qScale = lm.queueScale || 1;
+            const minPad = lm.safeLeft + (isMobile ? 10 : 18);
+            const baseGap = Math.round(56 * qScale);
+            const availAssemblyW = Math.max(240, lm.usableW - (isMobile ? 20 : 36));
+            const availQueueSpan = Math.max(140, availAssemblyW - Math.round(84 * qScale));
             const actualQueueSpan = Math.min(9 * baseGap, availQueueSpan);
-            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? 44 : 34;
-            const totalQueueW = 28 + actualQueueSpan + overflowGap + 22;
-            const sidePadding = Math.max(minPad, Math.floor((width - totalQueueW) / 2));
-            this.queueStartX = sidePadding + 28;
+            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? Math.round(44 * qScale) : Math.round(34 * qScale);
+            const totalQueueW = Math.round(28 * qScale) + actualQueueSpan + overflowGap + Math.round(22 * qScale);
+            const sidePadding = Math.max(minPad, Math.floor(lm.safeLeft + (lm.usableW - totalQueueW) / 2));
+            this.queueStartX = sidePadding + Math.round(28 * qScale);
             this.queueActualSpan = actualQueueSpan;
             this.queueOverflowGap = overflowGap;
 
+            const hlSize = Math.round(58 * qScale);
+            const hlHalf = Math.round(hlSize / 2);
             this.queueHighlight = this.add.graphics().setDepth(25);
             this.queueHighlight.lineStyle(4, 0x000000, 0.45);
-            this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
+            this.queueHighlight.strokeRoundedRect(-hlHalf, -hlHalf, hlSize, hlSize, 8);
             this.queueHighlight.lineStyle(3, 0xffd700, 1);
-            this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
+            this.queueHighlight.strokeRoundedRect(-hlHalf, -hlHalf, hlSize, hlSize, 8);
             this.queueHighlight.setVisible(false);
 
             // Dedicated container for all visible conveyor items inside mainContainer
             this.conveyorContainer = this.add.container(0, 0).setDepth(12);
 
             // Dark grey overflow block to the right of the queue
-            this.overflowBlockContainer = this.add.container(0, 0).setDepth(20).setVisible(false);
+            this.overflowBlockContainer = this.add.container(0, 0).setDepth(20).setVisible(false).setScale(qScale);
             const obSize = 44;
             const overflowBg = this.add.graphics();
             overflowBg.fillStyle(0x1e293b, 0.95);
@@ -1877,13 +2135,11 @@
             this.overflowBlockContainer.add([overflowBg, this.overflowNumText, overflowLabel]);
             this.mainContainer.add([this.conveyorContainer, this.queueHighlight, this.overflowBlockContainer]);
 
-            // Toolbar above conveyor: Sanitiser station, Pet helpers (Center-aligned, matching compact size!) & Auto-Sort toggle
-            const btnSize = isSmallScreen ? 26 : 28;
-            const btnSpacing = 7;
+            // Toolbar above conveyor: Sanitiser station, Pet helpers & Auto-Sort toggle (strictly non-overlapping!)
+            const btnSize = Math.max(22, Math.min(28, lm.toolbarH));
+            const btnSpacing = isMobile ? 5 : 7;
 
-            // Collect active action buttons
             const activeActionButtons = [];
-
             if (this.state.unlockedSanitiser) {
                 activeActionButtons.push({
                     id: 'sanitiser',
@@ -1915,9 +2171,11 @@
                 }
             });
 
-            // Center align the entire cluster of queue action buttons!
+            const autoSortReserveW = this.state.unlockedAutoSort ? (isMobile ? 104 : 122) : 0;
             const totalActionW = (activeActionButtons.length * btnSize) + Math.max(0, (activeActionButtons.length - 1) * btnSpacing);
-            const clusterStartX = Math.round((width - totalActionW) / 2);
+            const combinedToolbarW = totalActionW + (autoSortReserveW > 0 && totalActionW > 0 ? 10 : 0) + autoSortReserveW;
+            let clusterStartX = Math.round(lm.safeLeft + (lm.usableW - combinedToolbarW) / 2);
+            clusterStartX = Math.max(lm.safeLeft + 8, clusterStartX);
 
             this.activeToolbarButtons = [];
             activeActionButtons.forEach((act, idx) => {
@@ -1931,7 +2189,7 @@
                 bgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
 
                 const iconTxt = this.add.text(btnSize / 2, btnSize / 2, act.icon, {
-                    fontSize: '15px'
+                    fontSize: btnSize < 25 ? '13px' : '15px'
                 }).setOrigin(0.5);
 
                 const fillGfx = this.add.graphics();
@@ -1949,8 +2207,9 @@
                     this.sanitiserFillGfx = fillGfx;
                 }
 
-                btnContainer.setSize(btnSize, btnSize);
-                btnContainer.setInteractive(new Phaser.Geom.Rectangle(0, 0, btnSize, btnSize), Phaser.Geom.Rectangle.Contains);
+                // Slightly enlarged vertical touch pad around toolbar buttons for mobile comfort
+                btnContainer.setSize(btnSize + 4, btnSize + 4);
+                btnContainer.setInteractive(new Phaser.Geom.Rectangle(-2, -2, btnSize + 4, btnSize + 4), Phaser.Geom.Rectangle.Contains);
                 btnContainer.on('pointerup', () => {
                     const cd = act.type === 'sanitiser' ? (this.state.sanitiserCooldown || 0) : ((this.state.petCooldowns && this.state.petCooldowns[act.targetType]) || 0);
                     if (cd > 0) return;
@@ -1961,12 +2220,16 @@
             });
             this.updateToolbarCooldownsUI();
 
-            // Auto-Sort Pause/Resume Toggle (placed to the right, aligning near overflow block)
+            // Auto-Sort Pause/Resume Toggle (cleanly placed beside action buttons with zero overlap)
             if (this.state.unlockedAutoSort) {
-                const autoSortLabel = this.state.autoSortPaused ? '▶️ Auto-Sort: OFF' : ('⏸️ Auto-Sort: ' + (this.state.autoSortDelay / 1000).toFixed(1) + 's');
-                const autoSortX = Math.min(width - 65, this.getQueueSlotX(9) + 55);
+                const autoSortLabel = this.state.autoSortPaused
+                    ? (isMobile ? '▶️ Auto: OFF' : '▶️ Auto-Sort: OFF')
+                    : ((isMobile ? '⏸️ Auto: ' : '⏸️ Auto-Sort: ') + (this.state.autoSortDelay / 1000).toFixed(1) + 's');
+                const autoSortX = totalActionW > 0
+                    ? Math.min(width - lm.safeRight - 56, clusterStartX + totalActionW + 10 + Math.round(autoSortReserveW / 2))
+                    : Math.round(width / 2);
                 const btnAutoSort = this.add.text(autoSortX, toolbarY + (btnSize / 2), autoSortLabel, {
-                    fontSize: '10px', style: 'bold',
+                    fontSize: isMobile ? '9.5px' : '10px', style: 'bold',
                     backgroundColor: this.state.autoSortPaused ? '#374151' : '#1e3a8a',
                     color: '#ffffff', padding: { x: 7, y: 4 }
                 }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
@@ -1978,7 +2241,7 @@
                 this.mainContainer.add(btnAutoSort);
             }
 
-            // 4. BINS (Includes animated Green, Blue, Purple & Yellow wheelie bins!)
+            // 4. BINS (Animated Green, Blue, Purple, Yellow + Metal/Fabric, scaled cleanly to never overlap!)
             this.bins = [];
             const binData = [
                 { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', count: this.state.resources.organic, sheetKey: 'bin_green_sheet', animKey: 'bin_green_anim' },
@@ -1993,7 +2256,17 @@
                 binData.push({ id: 'fabric', key: '6', name: 'FABRIC', sprite: 'bin_fabric', count: this.state.resources.fabric });
             }
 
-            const binSpriteScale = isSmallScreen ? (BIN_SPRITE_CONFIG.scale * 0.85) : BIN_SPRITE_CONFIG.scale;
+            const maxBinVisualW = Math.min(isSmallScreen ? 72 : 82, Math.max(44, binSpacing - 6));
+            const binSpriteScale = Math.min(
+                BIN_SPRITE_CONFIG.scale,
+                maxBinVisualW / BIN_SPRITE_CONFIG.frameWidth,
+                binH / BIN_SPRITE_CONFIG.frameHeight
+            );
+            this.currentBinSpriteScale = binSpriteScale;
+            const visualBinW = Math.round(BIN_SPRITE_CONFIG.frameWidth * binSpriteScale);
+            const visualBinH = Math.round(BIN_SPRITE_CONFIG.frameHeight * binSpriteScale);
+            const compactLabels = isMobile || binSpacing < 72;
+
             binData.forEach((b, idx) => {
                 const bx = Math.round(startBinX + (idx * binSpacing));
                 const isSheet = !!(b.sheetKey && this.textures.exists(b.sheetKey));
@@ -2001,28 +2274,55 @@
                 if (isSheet) {
                     sprite = this.add.sprite(bx, binBaselineY, b.sheetKey, 0)
                         .setOrigin(0.5, 1)
-                        .setScale(binSpriteScale)
-                        .setInteractive({ useHandCursor: true });
+                        .setScale(binSpriteScale);
                 } else {
                     sprite = this.add.sprite(bx, binBaselineY, b.sprite)
                         .setOrigin(0.5, 1)
-                        .setDisplaySize(isSmallScreen ? 68 : 78, binH)
-                        .setInteractive({ useHandCursor: true });
+                        .setDisplaySize(visualBinW, Math.min(binH, visualBinH));
                 }
 
-                const labelY = binBaselineY - binH - 12;
-                const label = this.add.text(bx, labelY, '[' + b.key + '] ' + b.name, { fontSize: '11px', color: '#fff', style: 'bold' }).setOrigin(0.5);
-                const countY = binBaselineY - (binH * 0.42);
+                const labelTextStr = compactLabels ? b.name : ('[' + b.key + '] ' + b.name);
+                const labelFontSize = (binSpacing < 60) ? '9px' : ((binSpacing < 72) ? '10px' : '11px');
+                const label = this.add.text(bx, lm.binLabelY, labelTextStr, {
+                    fontSize: labelFontSize, color: '#fff', style: 'bold'
+                }).setOrigin(0.5);
+
+                const countY = binBaselineY - Math.round(Math.min(binH, visualBinH) * 0.42);
                 const countText = this.add.text(bx, countY, '' + b.count, {
-                    fontSize: '15px', color: '#ffffff', stroke: '#000000', strokeThickness: 4, style: 'bold'
+                    fontSize: (binH < 56) ? '12px' : '15px',
+                    color: '#ffffff', stroke: '#000000', strokeThickness: 4, style: 'bold'
                 }).setOrigin(0.5).setDepth(2);
 
+                const hlW = Math.max(46, Math.min(binSpacing - 4, visualBinW + 10));
+                const hlH = Math.min(binH, visualBinH) + 8;
+
+                // Golden hint outline (shows correct bin during drag)
                 const binHighlightGfx = this.add.graphics();
                 binHighlightGfx.lineStyle(3, 0xffd700, 1);
-                binHighlightGfx.strokeRoundedRect(bx - 38, binBaselineY - binH - 4, 76, binH + 8, 8);
+                binHighlightGfx.strokeRoundedRect(bx - (hlW / 2), binBaselineY - hlH + 4, hlW, hlH, 8);
                 binHighlightGfx.setVisible(false);
 
-                sprite.on('pointerdown', () => this.sortHeadTrash(b.id, 0));
+                // Bright cyan target glow (shows exact bin your dragged item will drop into right now!)
+                const binHoverGfx = this.add.graphics();
+                binHoverGfx.fillStyle(0x38bdf8, 0.22);
+                binHoverGfx.fillRoundedRect(bx - (hlW / 2) - 2, binBaselineY - hlH + 2, hlW + 4, hlH + 4, 10);
+                binHoverGfx.lineStyle(3, 0x38bdf8, 1);
+                binHoverGfx.strokeRoundedRect(bx - (hlW / 2) - 2, binBaselineY - hlH + 2, hlW + 4, hlH + 4, 10);
+                binHoverGfx.setVisible(false);
+
+                // Generous full-column tap target covering bin label + bin body
+                const touchZoneW = Math.max(46, binSpacing - 2);
+                const touchZoneH = (binBaselineY - lm.binLabelY) + 18;
+                const touchZoneY = Math.round((lm.binLabelY + binBaselineY) / 2);
+                const binTouchZone = this.add.zone(bx, touchZoneY, touchZoneW, touchZoneH)
+                    .setOrigin(0.5)
+                    .setInteractive({ useHandCursor: true });
+
+                binTouchZone.on('pointerdown', () => {
+                    if (this.draggedItem) return;
+                    this.sortHeadTrash(b.id, 0);
+                });
+
                 if (b.animKey) {
                     sprite.on('animationcomplete', () => {
                         sprite.setFrame(0);
@@ -2030,35 +2330,51 @@
                         sprite.setScale(binSpriteScale);
                     });
                 }
-                this.bins.push({ sprite, id: b.id, x: bx, y: binCenterY, baselineY: binBaselineY, countText, highlightGfx: binHighlightGfx, sheetKey: b.sheetKey, animKey: b.animKey });
-                this.mainContainer.add([sprite, label, countText, binHighlightGfx]);
+
+                this.bins.push({
+                    sprite, id: b.id, x: bx, y: binCenterY, baselineY: binBaselineY,
+                    width: visualBinW, height: Math.min(binH, visualBinH),
+                    baseScale: binSpriteScale, isSheet,
+                    countText, highlightGfx: binHighlightGfx, hoverGfx: binHoverGfx,
+                    sheetKey: b.sheetKey, animKey: b.animKey
+                });
+                this.mainContainer.add([binHoverGfx, sprite, label, countText, binHighlightGfx, binTouchZone]);
             });
 
-            // Streak Score Text & Streak Bar Setup (Centered directly under the bins!)
+            // Streak Score Text & Streak Bar Setup (Centered directly under the bins, strictly above gate!)
             this.dumpsterStreakText = this.add.text(streakX, streakY, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
-                fontSize: '11px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 3 }
+                fontSize: isSmallScreen ? '10px' : '11px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 2 }
             }).setOrigin(0.5).setDepth(15);
             this.dumpsterBarGfx = this.add.graphics().setDepth(15);
             this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
             // 5. GATE (Direct Intake onto Conveyor Belt)
-            // On mobile, position gate in the middle/slightly right-of-center so the queue of customers has ample room on the left
-            const gateX = isMobile ? Math.round(width * 0.52) : Math.max(235, Math.round(width * 0.30));
+            const gateX = isMobile ? Math.round(lm.safeLeft + lm.usableW * 0.56) : Math.max(lm.safeLeft + 235, Math.round(width * 0.30));
             this.gatePos = { x: gateX, y: bottomY };
 
-            this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate').setInteractive({ useHandCursor: true }).setDepth(1);
-            const gateLabel = isMobile ? 'GATE' : 'GATE [SPACE]';
-            this.gateText = this.add.text(this.gatePos.x, this.gatePos.y - (isMobile ? 26 : 36), gateLabel, { fontSize: '11px', color: '#00ff00', style: 'bold' }).setOrigin(0.5);
+            this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate')
+                .setDisplaySize(lm.gateSize, lm.gateSize)
+                .setDepth(1);
+            // Generous touch zone on gate for easy mobile tapping & long-press
+            const gateHitSz = Math.max(66, lm.gateSize + 12);
+            this.gateTouchZone = this.add.zone(this.gatePos.x, this.gatePos.y, gateHitSz, gateHitSz)
+                .setOrigin(0.5)
+                .setInteractive({ useHandCursor: true });
+
+            const gateLabel = isMobile ? 'GATE (TAP)' : 'GATE [SPACE]';
+            this.gateText = this.add.text(this.gatePos.x, lm.gateLabelY, gateLabel, {
+                fontSize: isSmallScreen ? '10px' : '11px', color: '#00ff00', style: 'bold'
+            }).setOrigin(0.5);
 
             this.autoGateGfx = this.add.graphics();
             this.autoSortGfx = this.add.graphics().setDepth(25);
             this.longPressGfx = this.add.graphics().setDepth(10);
             this.tutorialIndicatorsGfx = this.add.graphics().setDepth(25);
 
-            this.setupLongPress(this.gateSprite, 'gate');
+            this.setupLongPress(this.gateTouchZone, 'gate');
 
             this.mainContainer.add([
-                this.gateSprite, this.gateText, this.autoGateGfx, this.autoSortGfx,
+                this.gateSprite, this.gateTouchZone, this.gateText, this.autoGateGfx, this.autoSortGfx,
                 this.longPressGfx, this.tutorialIndicatorsGfx
             ]);
 
@@ -2264,10 +2580,12 @@
 
         renderMeadowShopLine(w, splitY) {
             this.splitY = splitY;
-            const walkY = splitY - 25;
-            const blockY = splitY - 28;
-
             const metrics = this.getShopLayoutMetrics(w);
+            const shopScale = metrics.shopScale || 1;
+            const walkY = splitY - Math.round(22 * shopScale);
+            const blockY = splitY - Math.round(metrics.bh / 2);
+            this.shopWalkY = walkY;
+
             this.renderRepresentativeBlocks(metrics.storeX, metrics.factoryX, blockY, metrics.bw, metrics.bh);
 
             if (!this.shopCustomers) this.shopCustomers = [];
@@ -2585,9 +2903,33 @@
         }
 
         renderCenteredXPBar(w, y) {
-            const barW = Math.min(w * 0.55, 240);
+            const lm = this.layoutMetrics;
+            const isMobile = lm ? lm.isMobile : (w < 560);
+            const safeLeft = lm ? lm.safeLeft : 0;
+            const safeRight = lm ? lm.safeRight : 0;
+            const usableW = Math.max(260, w - safeLeft - safeRight);
+
+            let barW, bx;
+            if (isMobile) {
+                barW = Math.min(usableW - 24, 280);
+                bx = Math.round(safeLeft + (usableW - barW) / 2);
+            } else {
+                // Keep XP bar cleanly between HUD card (left) and nav buttons (right) even on narrow landscape / tablets
+                const hudRight = safeLeft + 16 + Math.min(250, Math.round(usableW * 0.34)) + 10;
+                const navLeft = (lm && lm.isShortLandscape)
+                    ? (w - safeRight - 240)
+                    : (w - safeRight - 135);
+                const freeW = navLeft - hudRight;
+                if (freeW >= 150) {
+                    barW = Math.min(240, freeW - 8);
+                    const centeredX = Math.round((w - barW) / 2);
+                    bx = Phaser.Math.Clamp(centeredX, hudRight + 4, navLeft - barW - 4);
+                } else {
+                    barW = Math.min(210, Math.max(140, usableW * 0.34));
+                    bx = Math.round((w - barW) / 2);
+                }
+            }
             const barH = 18;
-            const bx = (w - barW) / 2;
 
             const neededXP = this.state.level * 20;
             const pct = Math.min(1, Math.max(0, this.state.xp / neededXP));
@@ -2603,8 +2945,8 @@
             this.xpBarFillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
 
             const sp = this.state.skillPoints || 0;
-            this.xpBarText = this.add.text(w / 2, y + (barH / 2), 'LEVEL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP)  ⭐ ' + sp + ' SP', {
-                fontSize: '11px', style: 'bold', color: '#ffffff'
+            this.xpBarText = this.add.text(bx + (barW / 2), y + (barH / 2), 'LVL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP) ⭐' + sp + ' SP', {
+                fontSize: barW < 185 ? '9.5px' : '10.5px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
             this.xpBarConfig = { bx, y, barW, barH, w };
@@ -2623,15 +2965,18 @@
             this.xpBarFillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
 
             const sp = this.state.skillPoints || 0;
-            this.xpBarText.setText('LEVEL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP)  ⭐ ' + sp + ' SP');
+            this.xpBarText.setText('LVL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP) ⭐' + sp + ' SP');
         }
 
         renderTopHUDBar(w, topBarY, isMobile) {
-            const cardX = isMobile ? 12 : 20;
-            const cardY = isMobile ? (topBarY + 18 + 8) : 28;
-            const cardW = isMobile ? (w - 24) : 265;
+            const lm = this.layoutMetrics;
+            const safeLeft = lm ? lm.safeLeft : 0;
+            const usableW = lm ? lm.usableW : w;
+            const cardX = isMobile ? (safeLeft + 10) : (safeLeft + 16);
+            const cardY = lm ? lm.hudCardY : (isMobile ? (topBarY + 22) : 20);
+            const cardW = isMobile ? (usableW - 20) : Math.min(255, Math.round(usableW * 0.36));
             const hasExtraTypes = (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric);
-            const cardH = hasExtraTypes ? (isMobile ? 74 : 74) : (isMobile ? 58 : 60);
+            const cardH = lm ? lm.hudCardH : (hasExtraTypes ? 68 : 54);
 
             const cardBg = this.add.graphics();
             // Solid dark charcoal background for maximum contrast against blue sky
@@ -2654,8 +2999,8 @@
                 if (this.state.unlockedTypes.fabric) text += '🌸 Fabric: ' + (r.fabric || 0);
             }
 
-            this.hudTextObj = this.add.text(cardX + 10, cardY + 7, text, {
-                fontSize: '11px', style: 'bold', color: '#ffffff', lineSpacing: 3
+            this.hudTextObj = this.add.text(cardX + 9, cardY + 5, text, {
+                fontSize: (cardW < 235 || w < 350) ? '10px' : '11px', style: 'bold', color: '#ffffff', lineSpacing: 2
             });
 
             this.mainContainer.add([cardBg, this.hudTextObj]);
@@ -2667,7 +3012,9 @@
             this.autoGateGfx.clear();
             if (!this.state.isGateAuto) return;
 
-            const cx = this.gatePos.x - 48; const cy = this.gatePos.y + 26;
+            const gSz = this.currentGateSize || 62;
+            const cx = this.gatePos.x - Math.round(gSz * 0.72);
+            const cy = this.gatePos.y + Math.round(gSz * 0.35);
             this.autoGateGfx.lineStyle(2, 0x555555, 1);
             this.autoGateGfx.strokeCircle(cx, cy, 9);
 
@@ -2769,13 +3116,17 @@
 
         createTopNavButtons(w, isMobile = false, hudBottomY = 90) {
             const hasAnyAfford = this.hasCategoryAffordable('gate') || this.hasCategoryAffordable('conveyor') || this.hasCategoryAffordable('skills');
+            const lm = this.layoutMetrics;
+            const safeLeft = lm ? lm.safeLeft : 0;
+            const safeRight = lm ? lm.safeRight : 0;
+            const usableW = lm ? lm.usableW : w;
 
             if (isMobile) {
-                const totalMargin = 24;
+                const sideMargin = 10;
                 const gap = 6;
-                const btnW = Math.floor((w - totalMargin - (2 * gap)) / 3);
-                const btnH = 26;
-                const navY = hudBottomY + 6;
+                const btnW = Math.floor((usableW - (2 * sideMargin) - (2 * gap)) / 3);
+                const btnH = lm ? lm.navH : 28;
+                const navY = lm ? lm.navY : (hudBottomY + 5);
 
                 const makeMobileNavBtn = (centerX, label, color, onClick) => {
                     const btnGfx = this.add.graphics();
@@ -2785,12 +3136,12 @@
                     btnGfx.strokeRoundedRect(centerX - (btnW / 2), navY, btnW, btnH, 6);
 
                     const txt = this.add.text(centerX, navY + (btnH / 2), label, {
-                        fontSize: (w < 380) ? '9.5px' : '10.5px',
+                        fontSize: (usableW < 360) ? '9.5px' : '10.5px',
                         style: 'bold',
                         color: color
                     }).setOrigin(0.5);
 
-                    const hitZone = this.add.zone(centerX, navY + (btnH / 2), btnW, btnH)
+                    const hitZone = this.add.zone(centerX, navY + (btnH / 2), btnW, Math.max(32, btnH))
                         .setInteractive({ useHandCursor: true });
                     hitZone.on('pointerup', onClick);
 
@@ -2798,9 +3149,9 @@
                     return { txt, hitZone, btnGfx };
                 };
 
-                const x1 = Math.round(12 + (btnW / 2));
-                const x2 = Math.round(w / 2);
-                const x3 = Math.round(w - 12 - (btnW / 2));
+                const x1 = Math.round(safeLeft + sideMargin + (btnW / 2));
+                const x2 = Math.round(safeLeft + (usableW / 2));
+                const x3 = Math.round(w - safeRight - sideMargin - (btnW / 2));
 
                 makeMobileNavBtn(x1, '🪴 DECOR', '#a5d6a7', () => this.openModal('decorations'));
 
@@ -2810,16 +3161,32 @@
                 this.btnUpgrades = upgObj.txt;
 
                 makeMobileNavBtn(x3, '🕹️ ARCADE', '#ffeb3b', () => this.openArcadeModal());
-            } else {
-                const btnDecor = this.add.text(w - 20, 26, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+            } else if (lm && lm.isShortLandscape) {
+                // Horizontal compact row in top-right for short landscape devices (phones rotated sideways)
+                const navY = lm.topBarY;
+                let rx = w - safeRight - 14;
+                const btnArcade = this.add.text(rx, navY, '🕹️ ARCADE', { fontSize: '10px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 6, y: 5 } })
+                    .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openArcadeModal());
+                rx -= (btnArcade.width + 6);
+                this.btnUpgrades = this.add.text(rx, navY, hasAnyAfford ? '🛠️ UPGRADE!' : '🛠️ UPGRADES', { fontSize: '10px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 6, y: 5 } })
+                    .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('upgrades', 'gate'));
+                rx -= (this.btnUpgrades.width + 6);
+                const btnDecor = this.add.text(rx, navY, '🪴 DECOR', { fontSize: '10px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 6, y: 5 } })
                     .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
 
-                this.btnUpgrades = this.add.text(w - 20, 56, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                this.mainContainer.add([btnDecor, this.btnUpgrades, btnArcade]);
+            } else {
+                const rx = w - safeRight - 16;
+                const y0 = lm ? lm.topBarY : 20;
+                const btnDecor = this.add.text(rx, y0, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                    .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
+
+                this.btnUpgrades = this.add.text(rx, y0 + 30, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
                     .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                         this.openModal('upgrades', 'gate');
                     });
 
-                const btnArcade = this.add.text(w - 20, 86, '🕹️ ARCADE', { fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                const btnArcade = this.add.text(rx, y0 + 60, '🕹️ ARCADE', { fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
                     .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                         this.openArcadeModal();
                     });
@@ -2921,19 +3288,25 @@
 
         getQueueSlotX(idx) {
             const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
-            const isMobile = (this.scale && this.scale.height > width && width < 600) || width < 520;
-            const minPad = isMobile ? 12 : 20;
-            const baseGap = 56;
+            const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
+            const lm = this.layoutMetrics;
+            const isMobile = lm ? lm.isMobile : ((height > width && width < 640) || width < 560);
+            const safeLeft = lm ? lm.safeLeft : 0;
+            const usableW = lm ? lm.usableW : width;
+            const qScale = lm ? (lm.queueScale || 1) : 1;
+
+            const minPad = safeLeft + (isMobile ? 10 : 18);
+            const baseGap = Math.round(56 * qScale);
             const weights = [1.0, 0.95, 0.85, 0.75, 0.65, 0.55, 0.45, 0.35, 0.25];
             const totalWeight = 5.8;
 
-            const availAssemblyW = width - (2 * minPad);
-            const availQueueSpan = Math.max(140, availAssemblyW - 84);
+            const availAssemblyW = Math.max(240, usableW - (isMobile ? 20 : 36));
+            const availQueueSpan = Math.max(140, availAssemblyW - Math.round(84 * qScale));
             const actualQueueSpan = Math.min(9 * baseGap, availQueueSpan);
-            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? 44 : 34;
-            const totalQueueW = 28 + actualQueueSpan + overflowGap + 22;
-            const sidePadding = Math.max(minPad, Math.floor((width - totalQueueW) / 2));
-            const qStartX = sidePadding + 28;
+            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? Math.round(44 * qScale) : Math.round(34 * qScale);
+            const totalQueueW = Math.round(28 * qScale) + actualQueueSpan + overflowGap + Math.round(22 * qScale);
+            const sidePadding = Math.max(minPad, Math.floor(safeLeft + (usableW - totalQueueW) / 2));
+            const qStartX = sidePadding + Math.round(28 * qScale);
 
             if (idx === 0) return qStartX;
             if (actualQueueSpan >= 9 * baseGap) {
@@ -2946,12 +3319,112 @@
             return Math.round(x);
         }
 
+        findDropTargetBin(itemX, itemY, pointerX, pointerY) {
+            if (!this.bins || this.bins.length === 0) return null;
+            const spacing = this.currentBinSpacing || 80;
+            const binTop = this.currentBinTopY || (this.bins[0].y - 40);
+            const binBottom = this.currentBinBaselineY || (this.bins[0].y + 40);
+
+            const candidates = [];
+            if (typeof pointerX === 'number' && typeof pointerY === 'number') {
+                candidates.push({ x: pointerX, y: pointerY });
+            }
+            candidates.push({ x: itemX, y: itemY });
+
+            // Generous vertical drop band covering above bin labels to well below bin base
+            const zoneTop = binTop - 38;
+            const zoneBottom = binBottom + 48;
+            const halfColW = Math.max(spacing * 0.56, 42);
+
+            for (const pt of candidates) {
+                if (pt.y >= zoneTop && pt.y <= zoneBottom) {
+                    let bestBin = null;
+                    let bestDx = Infinity;
+                    for (const b of this.bins) {
+                        const dx = Math.abs(pt.x - b.x);
+                        if (dx <= halfColW && dx < bestDx) {
+                            bestDx = dx;
+                            bestBin = b;
+                        }
+                    }
+                    if (bestBin) return bestBin;
+                }
+            }
+
+            // Fallback: strictly nearest bin within a generous radial zone
+            const maxRadial = Math.max(68, Math.min(96, spacing * 0.85));
+            let nearest = null;
+            let minDist = Infinity;
+            for (const pt of candidates) {
+                for (const b of this.bins) {
+                    const dist = Phaser.Math.Distance.Between(pt.x, pt.y, b.x, b.y);
+                    if (dist < maxRadial && dist < minDist) {
+                        minDist = dist;
+                        nearest = b;
+                    }
+                }
+            }
+            return nearest;
+        }
+
+        clearDragBinFeedback() {
+            if (!this.bins) return;
+            this.bins.forEach(b => {
+                if (b.highlightGfx && b.highlightGfx.scene) b.highlightGfx.setVisible(false);
+                if (b.hoverGfx && b.hoverGfx.scene) b.hoverGfx.setVisible(false);
+                if (b.sprite && b.sprite.scene && b.isSheet && b.baseScale) {
+                    b.sprite.setScale(b.baseScale);
+                }
+            });
+            this.hoveredDropBin = null;
+        }
+
+        updateDragHoverFeedback(itemX, itemY, pointerX, pointerY) {
+            const target = this.findDropTargetBin(itemX, itemY, pointerX, pointerY);
+            if (target === this.hoveredDropBin) return;
+
+            if (this.hoveredDropBin) {
+                if (this.hoveredDropBin.hoverGfx && this.hoveredDropBin.hoverGfx.scene) {
+                    this.hoveredDropBin.hoverGfx.setVisible(false);
+                }
+                if (this.hoveredDropBin.sprite && this.hoveredDropBin.sprite.scene && this.hoveredDropBin.isSheet && this.hoveredDropBin.baseScale) {
+                    this.hoveredDropBin.sprite.setScale(this.hoveredDropBin.baseScale);
+                }
+            }
+
+            this.hoveredDropBin = target;
+
+            if (target) {
+                if (target.hoverGfx && target.hoverGfx.scene) {
+                    target.hoverGfx.setVisible(true);
+                }
+                if (target.sprite && target.sprite.scene && target.isSheet && target.baseScale) {
+                    target.sprite.setScale(target.baseScale * 1.07);
+                }
+            }
+        }
+
+        cancelActiveDrag() {
+            const item = this.draggedItem;
+            this.draggedItem = null;
+            this.clearDragBinFeedback();
+            if (item && item.container && item.container.scene) {
+                const qScale = (this.layoutMetrics && this.layoutMetrics.queueScale) ? this.layoutMetrics.queueScale : 1;
+                item.container.setScale(qScale);
+                if (this.conveyorContainer && this.conveyorContainer.scene && item.container.parentContainer !== this.conveyorContainer) {
+                    this.conveyorContainer.add(item.container);
+                }
+            }
+            this.renderHorizontalQueue();
+        }
+
         renderHorizontalQueue() {
             if (!this.conveyorContainer) return;
 
             const width = (this.scale && this.scale.width) ? this.scale.width : (window.innerWidth || 800);
-            const isMobile = (this.scale && this.scale.height > width && width < 600) || width < 520;
-            const qStartX = this.getQueueSlotX(0);
+            const lm = this.layoutMetrics;
+            const isMobile = lm ? lm.isMobile : ((this.scale && this.scale.height > width && width < 640) || width < 560);
+            const qScale = lm ? (lm.queueScale || 1) : 1;
             const qY = this.queueY;
 
             this.fillQueueFromExcess();
@@ -2959,9 +3432,11 @@
             const excess = this.state.excessTrashCount || 0;
             if (this.overflowBlockContainer) {
                 if (excess > 0) {
-                    const actualQueueSpan = this.queueActualSpan || Math.min(9 * 56, (width - (isMobile ? 24 : 40) - 84));
-                    const overflowGap = (actualQueueSpan >= 9 * 56) ? 44 : 34;
-                    const overflowX = this.getQueueSlotX(9) + overflowGap;
+                    const overflowGap = this.queueOverflowGap || Math.round(34 * qScale);
+                    const overflowX = Math.min(
+                        width - (lm ? lm.safeRight : 0) - Math.round(24 * qScale),
+                        this.getQueueSlotX(9) + overflowGap
+                    );
                     this.overflowBlockContainer.setPosition(overflowX, qY);
                     const excessLabel = excess > 999 ? '999+' : ('+' + excess);
                     this.overflowNumText.setText(excessLabel);
@@ -2985,9 +3460,14 @@
                 return;
             }
 
+            const hlSize = Math.round(58 * qScale);
+            const hlHalf = Math.round(hlSize / 2);
+
             this.trashQueue.forEach((item, index) => {
                 if (index < 10) {
                     const targetX = this.getQueueSlotX(index);
+                    const isBeingDragged = (this.draggedItem === item);
+
                     if (!item.container || !item.container.scene) {
                         const fixedKey = item.spriteKey || (item.container && item.container.spriteKey);
                         item.spriteKey = fixedKey;
@@ -2995,8 +3475,22 @@
                         item.container.setPosition(targetX, qY);
                     }
 
+                    // NEVER rip an actively dragged item back to the conveyor or strip its drag handlers!
+                    if (isBeingDragged) {
+                        if (index === 0 && this.queueHighlight) {
+                            this.queueHighlight.setVisible(true);
+                            this.queueHighlight.setPosition(targetX, qY);
+                        }
+                        return;
+                    }
+
+                    if (this.conveyorContainer && item.container.parentContainer !== this.conveyorContainer) {
+                        this.conveyorContainer.add(item.container);
+                    }
+
                     // Stack depth: earlier items sit on top of later bunched items
                     item.container.setDepth(20 - index);
+                    item.container.setScale(qScale);
 
                     let itemAlpha = 1;
                     if (index >= 6) itemAlpha = Math.max(0.2, 1 - ((index - 5) * 0.2));
@@ -3021,49 +3515,77 @@
                     if (index === 0) {
                         this.queueHighlight.clear();
                         this.queueHighlight.setDepth(25);
-                        // Subtle contrast backdrop outline so all 4 edges pop cleanly against any surface
                         this.queueHighlight.lineStyle(4, 0x000000, 0.45);
-                        this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
-                        // Crisp golden hero square
+                        this.queueHighlight.strokeRoundedRect(-hlHalf, -hlHalf, hlSize, hlSize, 8);
                         this.queueHighlight.lineStyle(3, 0xffd700, 1);
-                        this.queueHighlight.strokeRoundedRect(-29, -29, 58, 58, 8);
+                        this.queueHighlight.strokeRoundedRect(-hlHalf, -hlHalf, hlSize, hlSize, 8);
                         this.queueHighlight.setVisible(true);
                         this.queueHighlight.setPosition(targetX, qY);
 
-                        item.container.setSize(52, 52);
-                        item.container.setInteractive({ draggable: true });
+                        // Generous touch-friendly grab area centered on the hero rubbish item
+                        const hitSize = isMobile ? 88 : 74;
+                        item.container.setSize(hitSize, hitSize);
+                        item.container.setInteractive({ draggable: true, useHandCursor: true });
                         this.input.setDraggable(item.container);
 
                         item.container.off('drag');
                         item.container.off('dragstart');
                         item.container.off('dragend');
 
-                        item.container.on('dragstart', () => {
+                        item.container.on('dragstart', (pointer) => {
+                            if (this.tweens) this.tweens.killTweensOf(item.container);
                             this.draggedItem = item;
+                            this.hoveredDropBin = null;
+
+                            // Lift item onto top dragLayer so it ALWAYS draws ABOVE bins & labels!
+                            if (this.dragLayer && this.dragLayer.scene) {
+                                this.dragLayer.add(item.container);
+                            }
+                            item.container.setAlpha(1);
+                            item.container.setScale(qScale * 1.16);
+
+                            const isTouch = !!(pointer && (pointer.wasTouch || pointer.pointerType === 'touch'));
+                            if (pointer) {
+                                item.container.x = pointer.x;
+                                item.container.y = pointer.y + (isTouch ? -18 : 0);
+                            }
+
                             const correctBin = this.bins.find(b => b.id === item.type);
-                            if (correctBin) correctBin.highlightGfx.setVisible(true);
+                            if (correctBin && correctBin.highlightGfx) correctBin.highlightGfx.setVisible(true);
+                            this.updateDragHoverFeedback(
+                                item.container.x, item.container.y,
+                                pointer ? pointer.x : undefined,
+                                pointer ? pointer.y : undefined
+                            );
                         });
 
                         item.container.on('drag', (pointer, dragX, dragY) => {
-                            item.container.x = dragX;
-                            item.container.y = dragY;
+                            if (this.draggedItem !== item) return;
+                            const isTouch = !!(pointer && (pointer.wasTouch || pointer.pointerType === 'touch'));
+                            const liftY = isTouch ? -18 : 0;
+                            const px = pointer ? pointer.x : dragX;
+                            const py = pointer ? pointer.y : dragY;
+                            item.container.x = px;
+                            item.container.y = py + liftY;
+                            this.updateDragHoverFeedback(item.container.x, item.container.y, px, py);
                         });
 
-                        item.container.on('dragend', () => {
-                            this.bins.forEach(b => b.highlightGfx.setVisible(false));
+                        item.container.on('dragend', (pointer) => {
+                            if (this.draggedItem !== item) return;
+                            const px = pointer ? pointer.x : undefined;
+                            const py = pointer ? pointer.y : undefined;
+                            const droppedBin = this.findDropTargetBin(item.container.x, item.container.y, px, py);
+
+                            this.clearDragBinFeedback();
                             this.draggedItem = null;
+                            item.container.setScale(qScale);
 
-                            let droppedBin = null;
-                            this.bins.forEach(b => {
-                                const dist = Phaser.Math.Distance.Between(item.container.x, item.container.y, b.x, b.y);
-                                if (dist < 75) {
-                                    droppedBin = b;
-                                }
-                            });
-
-                            if (droppedBin) {
+                            if (droppedBin && this.trashQueue[0] === item) {
                                 this.sortHeadTrash(droppedBin.id, 0);
                             } else {
+                                if (this.conveyorContainer && this.conveyorContainer.scene && item.container.scene) {
+                                    this.conveyorContainer.add(item.container);
+                                }
                                 this.renderHorizontalQueue();
                             }
                         });
@@ -3087,6 +3609,10 @@
 
             const isManualSort = (itemIndex === 0);
             const item = this.trashQueue.splice(itemIndex, 1)[0];
+            if (this.draggedItem === item) {
+                this.draggedItem = null;
+                this.clearDragBinFeedback();
+            }
             const targetBin = this.bins.find(b => b.id === targetType);
             const isCorrect = (item.type === targetType);
 
@@ -3304,31 +3830,40 @@
 
             const w = this.scale.width; 
             const h = this.scale.height;
-            const boxW = Math.min(w * 0.94, 520);
-            const maxModalBottom = this.queueY ? (this.queueY - 65) : (h * 0.44);
-            const modalH = Math.round(Math.min(maxModalBottom, Math.min(h * 0.45, 365)));
+            const lm = this.layoutMetrics;
+            const safeTop = lm ? lm.safeTop : 0;
+            const usableW = lm ? lm.usableW : w;
+            const boxW = Math.min(usableW - 12, 520);
+            const maxModalBottom = this.queueY ? (this.queueY - Math.round(36 * (lm ? lm.queueScale : 1))) : (h * 0.44);
+            const topHalfModalH = Math.round(Math.min(maxModalBottom, Math.min(h * 0.48, 365)));
+            // On very short screens (e.g. mobile landscape), allow the modal to be tall enough to read & scroll comfortably
+            const modalH = (topHalfModalH < 220) ? Math.min(h - 12, 320) : topHalfModalH;
+            const modalTop = safeTop + 6;
+            const boxLeft = Math.round((w - boxW) / 2);
 
             this.modalContainer = this.add.container(0, 0).setDepth(100);
 
             const overlay = this.add.graphics();
-            overlay.fillStyle(0x000000, 0.75);
+            overlay.fillStyle(0x000000, 0.78);
             overlay.fillRect(0, 0, w, modalH);
+            const overlayHit = this.add.zone(w / 2, modalH / 2, w, modalH).setInteractive();
+            overlayHit.on('pointerdown', () => {});
 
             const box = this.add.graphics();
             box.fillStyle(0x1a1a1a, 1);
-            box.fillRect((w - boxW) / 2, 10, boxW, modalH - 20);
+            box.fillRect(boxLeft, modalTop, boxW, modalH - modalTop - 6);
             box.lineStyle(2, 0x4fc3f7, 1);
-            box.strokeRect((w - boxW) / 2, 10, boxW, modalH - 20);
+            box.strokeRect(boxLeft, modalTop, boxW, modalH - modalTop - 6);
 
-            const closeX = ((w - boxW) / 2) + boxW - 45;
-            const closeY = modalH - 25;
+            const closeX = boxLeft + boxW - 46;
+            const closeY = modalH - 22;
             const btnClose = this.add.text(closeX, closeY, '[ X ] CLOSE', {
-                fontSize: '12px', style: 'bold', color: '#ff5555', backgroundColor: '#222222', padding: { x: 8, y: 5 }
+                fontSize: '11.5px', style: 'bold', color: '#ff5555', backgroundColor: '#222222', padding: { x: 8, y: 5 }
             }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
             btnClose.on('pointerup', () => this.closeModal());
 
-            this.modalContainer.add([overlay, box, btnClose]);
+            this.modalContainer.add([overlay, overlayHit, box, btnClose]);
 
             if (type === 'upgrades') this.renderTopHalfUpgradesModal(w, modalH, boxW);
             if (type === 'decorations') this.renderDecorationsModal(w, modalH, boxW);
@@ -3729,21 +4264,30 @@
         }
 
         renderTopHalfUpgradesModal(w, modalH, boxW) {
-            const boxLeft = (w - boxW) / 2;
-            const sidebarW = 125;
+            const boxLeft = Math.round((w - boxW) / 2);
+            const isNarrowModal = boxW < 400;
+            const sidebarW = isNarrowModal ? 96 : 125;
+            const safeTop = this.layoutMetrics ? this.layoutMetrics.safeTop : 0;
+            const headerY = safeTop + 14;
 
-            const title = this.add.text(boxLeft + 15, 18, '🛠️ UPGRADES & STATIONS', { fontSize: '14px', style: 'bold', color: '#4fc3f7' });
-            this.modalWalletTxt = this.add.text(boxLeft + boxW - 140, 18, '$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP', { fontSize: '11px', style: 'bold', color: '#00ff00' });
+            const title = this.add.text(boxLeft + 12, headerY, isNarrowModal ? '🛠️ UPGRADES' : '🛠️ UPGRADES & STATIONS', {
+                fontSize: isNarrowModal ? '12.5px' : '14px', style: 'bold', color: '#4fc3f7'
+            });
+            this.modalWalletTxt = this.add.text(boxLeft + boxW - 12, headerY, '$' + this.state.money + ' | ⭐' + (this.state.skillPoints || 0) + ' SP', {
+                fontSize: isNarrowModal ? '10px' : '11px', style: 'bold', color: '#00ff00'
+            }).setOrigin(1, 0);
             this.modalContainer.add([title, this.modalWalletTxt]);
 
-            let currY = 46;
+            let currY = headerY + 28;
+            const sideBtnFont = isNarrowModal ? '10px' : '11px';
+            const sideBtnPad = isNarrowModal ? { x: 5, y: 4 } : { x: 8, y: 4 };
 
             const isGateSel = (this.activeUpgradeCategory === 'gate');
             const hasGateAff = this.hasCategoryAffordable('gate');
-            const btnGate = this.add.text(boxLeft + 12, currY, hasGateAff ? '🚪 Gate (!)' : '🚪 Gate', {
-                fontSize: '11px', style: 'bold',
+            const btnGate = this.add.text(boxLeft + 8, currY, hasGateAff ? '🚪 Gate (!)' : '🚪 Gate', {
+                fontSize: sideBtnFont, style: 'bold',
                 backgroundColor: isGateSel ? '#0288d1' : '#2b2b2b',
-                color: isGateSel ? '#ffffff' : (hasGateAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+                color: isGateSel ? '#ffffff' : (hasGateAff ? '#ffd700' : '#aaaaaa'), padding: sideBtnPad
             }).setInteractive({ useHandCursor: true });
             btnGate.baseLabel = '🚪 Gate';
             btnGate.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'gate'; this.openModal('upgrades', 'gate'); });
@@ -3752,22 +4296,22 @@
 
             const isConveyorSel = (this.activeUpgradeCategory === 'conveyor');
             const hasConveyorAff = this.hasCategoryAffordable('conveyor');
-            const btnConveyor = this.add.text(boxLeft + 12, currY, hasConveyorAff ? '🔄 Conveyor (!)' : '🔄 Conveyor', {
-                fontSize: '11px', style: 'bold',
+            const btnConveyor = this.add.text(boxLeft + 8, currY, hasConveyorAff ? '🔄 Belt (!)' : (isNarrowModal ? '🔄 Belt' : '🔄 Conveyor'), {
+                fontSize: sideBtnFont, style: 'bold',
                 backgroundColor: isConveyorSel ? '#0288d1' : '#2b2b2b',
-                color: isConveyorSel ? '#ffffff' : (hasConveyorAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+                color: isConveyorSel ? '#ffffff' : (hasConveyorAff ? '#ffd700' : '#aaaaaa'), padding: sideBtnPad
             }).setInteractive({ useHandCursor: true });
-            btnConveyor.baseLabel = '🔄 Conveyor';
+            btnConveyor.baseLabel = isNarrowModal ? '🔄 Belt' : '🔄 Conveyor';
             btnConveyor.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'conveyor'; this.openModal('upgrades', 'conveyor'); });
             this.modalContainer.add(btnConveyor);
             currY += 28;
 
             const isBinsSel = (this.activeUpgradeCategory === 'bins');
             const hasBinsAff = this.hasCategoryAffordable('bins');
-            const btnBins = this.add.text(boxLeft + 12, currY, hasBinsAff ? '🗑️ Bins (!)' : '🗑️ Bins', {
-                fontSize: '11px', style: 'bold',
+            const btnBins = this.add.text(boxLeft + 8, currY, hasBinsAff ? '🗑️ Bins (!)' : '🗑️ Bins', {
+                fontSize: sideBtnFont, style: 'bold',
                 backgroundColor: isBinsSel ? '#0288d1' : '#2b2b2b',
-                color: isBinsSel ? '#ffffff' : (hasBinsAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+                color: isBinsSel ? '#ffffff' : (hasBinsAff ? '#ffd700' : '#aaaaaa'), padding: sideBtnPad
             }).setInteractive({ useHandCursor: true });
             btnBins.baseLabel = '🗑️ Bins';
             btnBins.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'bins'; this.openModal('upgrades', 'bins'); });
@@ -3776,10 +4320,10 @@
 
             const isSkillsSel = (this.activeUpgradeCategory === 'skills');
             const hasSkillsAff = this.hasCategoryAffordable('skills');
-            const btnSkills = this.add.text(boxLeft + 12, currY, hasSkillsAff ? '⭐ Skills (!)' : '⭐ Skills', {
-                fontSize: '11px', style: 'bold',
+            const btnSkills = this.add.text(boxLeft + 8, currY, hasSkillsAff ? '⭐ Skills (!)' : '⭐ Skills', {
+                fontSize: sideBtnFont, style: 'bold',
                 backgroundColor: isSkillsSel ? '#0288d1' : '#2b2b2b',
-                color: isSkillsSel ? '#ffffff' : (hasSkillsAff ? '#ffd700' : '#aaaaaa'), padding: { x: 8, y: 4 }
+                color: isSkillsSel ? '#ffffff' : (hasSkillsAff ? '#ffd700' : '#aaaaaa'), padding: sideBtnPad
             }).setInteractive({ useHandCursor: true });
             btnSkills.baseLabel = '⭐ Skills';
             btnSkills.on('pointerup', () => { this.upgradeScrollY = 0; this.activeUpgradeCategory = 'skills'; this.openModal('upgrades', 'skills'); });
@@ -3819,15 +4363,15 @@
 
             const divGfx = this.add.graphics();
             divGfx.lineStyle(1.5, 0x444444, 1);
-            divGfx.lineBetween(boxLeft + sidebarW, 40, boxLeft + sidebarW, modalH - 35);
+            divGfx.lineBetween(boxLeft + sidebarW, headerY + 22, boxLeft + sidebarW, modalH - 35);
             this.modalContainer.add(divGfx);
 
-            const startX = boxLeft + sidebarW + 15;
+            const startX = boxLeft + sidebarW + (isNarrowModal ? 10 : 15);
             const upgradeList = this.getUpgradeListForCategory(this.activeUpgradeCategory);
 
             // Viewport bounds for the upgrades list
             const viewX = boxLeft + sidebarW + 2;
-            const viewY = 40;
+            const viewY = headerY + 22;
             const viewW = boxW - sidebarW - 4;
             const viewBottomY = modalH - 38;
             const viewH = Math.max(10, viewBottomY - viewY);
@@ -4026,12 +4570,13 @@ ${uItem.desc}`, {
         }
 
         renderDecorationsModal(w, modalH, boxW) {
-            const boxLeft = (w - boxW) / 2;
-            const title = this.add.text(w / 2, 22, '🪴 DECORATIONS', { fontSize: '16px', style: 'bold', color: '#a5d6a7' }).setOrigin(0.5);
+            const boxLeft = Math.round((w - boxW) / 2);
+            const safeTop = this.layoutMetrics ? this.layoutMetrics.safeTop : 0;
+            const title = this.add.text(w / 2, safeTop + 20, '🪴 DECORATIONS', { fontSize: '15px', style: 'bold', color: '#a5d6a7' }).setOrigin(0.5);
             const r = this.state.resources;
-            this.decorWalletTxt = this.add.text(w / 2, modalH * 0.86, '🟢 ' + r.organic + '  🔵 ' + r.paper + '  🟡 ' + r.plastic + '  🟣 ' + r.glass, {
-                fontSize: '12px', style: 'bold', color: '#ffd700'
-            }).setOrigin(0.5);
+            this.decorWalletTxt = this.add.text(boxLeft + 14, modalH - 22, '🟢' + r.organic + ' 🔵' + r.paper + ' 🟡' + r.plastic + ' 🟣' + r.glass, {
+                fontSize: boxW < 360 ? '10px' : '11.5px', style: 'bold', color: '#ffd700'
+            }).setOrigin(0, 0.5);
 
             this.modalContainer.add([title, this.decorWalletTxt]);
 
@@ -4084,55 +4629,126 @@ ${uItem.desc}`, {
                 }
             ];
 
-            decors.forEach((d, idx) => {
-                const dy = 50 + (idx * 44);
-                const infoTxt = this.add.text(boxLeft + 25, dy, d.name + '\n' + d.desc, { fontSize: '11px', color: '#fff', lineSpacing: 2 });
+            const viewX = boxLeft + 10;
+            const viewY = safeTop + 36;
+            const viewW = boxW - 20;
+            const viewBottomY = modalH - 40;
+            const viewH = Math.max(40, viewBottomY - viewY);
 
+            this.upgradeListContainer = this.add.container(0, 0);
+            this.modalContainer.add(this.upgradeListContainer);
+
+            this.modalMaskGfx = this.make.graphics();
+            this.modalMaskGfx.fillStyle(0xffffff, 1);
+            this.modalMaskGfx.fillRect(viewX, viewY, viewW, viewH);
+            this.upgradeListContainer.setMask(this.modalMaskGfx.createGeometryMask());
+
+            const rowH = boxW < 400 ? 50 : 44;
+            const textWrapW = Math.max(120, viewW - 122);
+            let totalDragDistance = 0;
+
+            decors.forEach((d, idx) => {
+                const dy = viewY + 4 + (idx * rowH);
+                const infoTxt = this.add.text(viewX + 6, dy, d.name + '\n' + d.desc, {
+                    fontSize: boxW < 380 ? '10px' : '11px', color: '#fff', lineSpacing: 2,
+                    wordWrap: { width: textWrapW }
+                });
+
+                const btnX = viewX + viewW - 14;
                 if (d.bought) {
-                    const boughtBadge = this.add.text(boxLeft + boxW - 35, dy + 6, '[ OWNED ]', { fontSize: '11px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
-                    this.modalContainer.add([infoTxt, boughtBadge]);
+                    const boughtBadge = this.add.text(btnX, dy + 8, '[ OWNED ]', { fontSize: '10.5px', style: 'bold', color: '#00ff00' }).setOrigin(1, 0);
+                    this.upgradeListContainer.add([infoTxt, boughtBadge]);
                 } else if (d.locked) {
-                    const lockBadge = this.add.text(boxLeft + boxW - 35, dy + 6, '[ LOCKED ]', {
-                        fontSize: '10.5px', style: 'bold',
+                    const lockBadge = this.add.text(btnX, dy + 8, '[ LOCKED ]', {
+                        fontSize: '10px', style: 'bold',
                         backgroundColor: '#374151', color: '#9ca3af', padding: 4
                     }).setOrigin(1, 0);
-                    this.modalContainer.add([infoTxt, lockBadge]);
+                    this.upgradeListContainer.add([infoTxt, lockBadge]);
                 } else {
-                    const btn = this.add.text(boxLeft + boxW - 35, dy + 6, 'BUY (' + d.costText + ')', {
-                        fontSize: '10.5px', style: 'bold',
+                    const btn = this.add.text(btnX, dy + 8, 'BUY (' + d.costText + ')', {
+                        fontSize: '10px', style: 'bold',
                         backgroundColor: d.canAfford ? '#00e676' : '#424242',
                         color: d.canAfford ? '#000' : '#aaa', padding: 4
                     }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
 
                     if (d.canAfford) {
-                        btn.on('pointerup', () => {
+                        btn.on('pointerup', (pointer) => {
+                            if (totalDragDistance > 8) return;
+                            if (pointer.y < viewY || pointer.y > viewBottomY) return;
                             d.action();
                             this.updateUI();
                             this.requestLayoutRebuild();
                             this.openModal('decorations');
                         });
                     }
-                    this.modalContainer.add([infoTxt, btn]);
+                    this.upgradeListContainer.add([infoTxt, btn]);
                 }
             });
+
+            const totalContentH = (decors.length * rowH) + 8;
+            const maxScroll = Math.max(0, totalContentH - viewH);
+            this.upgradeScrollY = Phaser.Math.Clamp(this.upgradeScrollY || 0, -maxScroll, 0);
+            this.upgradeListContainer.y = this.upgradeScrollY;
+
+            let isDraggingList = false;
+            let dragStartY = 0;
+            let dragStartScroll = 0;
+
+            this.modalWheelHandler = (pointer, gameObjects, deltaX, deltaY) => {
+                if (maxScroll <= 0) return;
+                if (pointer.x >= viewX && pointer.x <= viewX + viewW && pointer.y >= viewY && pointer.y <= viewBottomY) {
+                    this.upgradeScrollY = Phaser.Math.Clamp(this.upgradeScrollY - deltaY * 0.6, -maxScroll, 0);
+                    this.upgradeListContainer.y = this.upgradeScrollY;
+                }
+            };
+            this.modalPointerDownHandler = (pointer) => {
+                if (maxScroll <= 0) return;
+                if (pointer.x >= viewX && pointer.x <= viewX + viewW && pointer.y >= viewY && pointer.y <= viewBottomY) {
+                    isDraggingList = true;
+                    dragStartY = pointer.y;
+                    dragStartScroll = this.upgradeScrollY;
+                    totalDragDistance = 0;
+                }
+            };
+            this.modalPointerMoveHandler = (pointer) => {
+                if (!isDraggingList) return;
+                const dy = pointer.y - dragStartY;
+                if (pointer.prevPosition) totalDragDistance += Math.abs(pointer.position.y - pointer.prevPosition.y);
+                this.upgradeScrollY = Phaser.Math.Clamp(dragStartScroll + dy, -maxScroll, 0);
+                this.upgradeListContainer.y = this.upgradeScrollY;
+            };
+            this.modalPointerUpHandler = () => { isDraggingList = false; };
+
+            this.input.on('wheel', this.modalWheelHandler);
+            this.input.on('pointerdown', this.modalPointerDownHandler);
+            this.input.on('pointermove', this.modalPointerMoveHandler);
+            this.input.on('pointerup', this.modalPointerUpHandler);
         }
 
         renderFactoryModal(w, modalH, boxW) {
-            const boxLeft = (w - boxW) / 2;
-            const title = this.add.text(boxLeft + 15, 18, '🏭 RECYCLING FACTORY & WORKSHOP', { fontSize: '13px', style: 'bold', color: '#38bdf8' });
+            const boxLeft = Math.round((w - boxW) / 2);
+            const safeTop = this.layoutMetrics ? this.layoutMetrics.safeTop : 0;
+            const isNarrowModal = boxW < 400;
+            const headerY = safeTop + 14;
+            const title = this.add.text(boxLeft + 12, headerY, isNarrowModal ? '🏭 FACTORY' : '🏭 RECYCLING FACTORY & WORKSHOP', {
+                fontSize: isNarrowModal ? '12.5px' : '13px', style: 'bold', color: '#38bdf8'
+            });
             const r = this.state.resources;
-            const walletTxt = this.add.text(boxLeft + boxW - 140, 18, '$' + this.state.money + ' | 🟢' + r.organic + ' 🔵' + r.paper, { fontSize: '10.5px', style: 'bold', color: '#00e676' });
+            const walletTxt = this.add.text(boxLeft + boxW - 12, headerY, '$' + this.state.money + ' | 🟢' + r.organic + ' 🔵' + r.paper, {
+                fontSize: isNarrowModal ? '10px' : '10.5px', style: 'bold', color: '#00e676'
+            }).setOrigin(1, 0);
             this.modalContainer.add([title, walletTxt]);
 
             if (!this.state.factoryUnlocked) {
                 // Factory Purchase Screen
-                const centerBoxY = Math.round(modalH * 0.46);
-                const desc = this.add.text(w / 2, centerBoxY - 25, 'Industrial Manufacturing Facility\nConvert sorted rubbish tokens into high-value craft goods to fulfill customer trade orders!', {
-                    fontSize: '11px', color: '#ffffff', align: 'center', lineSpacing: 4
+                const centerBoxY = Math.round((headerY + modalH - 30) / 2);
+                const desc = this.add.text(w / 2, centerBoxY - 22, 'Industrial Manufacturing Facility\nConvert sorted rubbish tokens into high-value craft goods to fulfill customer trade orders!', {
+                    fontSize: '11px', color: '#ffffff', align: 'center', lineSpacing: 4,
+                    wordWrap: { width: boxW - 32 }
                 }).setOrigin(0.5);
 
                 const canAffordFactory = (this.state.money >= 25);
-                const btnBuyFactory = this.add.text(w / 2, centerBoxY + 35, '🏭 UNLOCK FACTORY ($25)', {
+                const btnBuyFactory = this.add.text(w / 2, centerBoxY + 34, '🏭 UNLOCK FACTORY ($25)', {
                     fontSize: '13px', style: 'bold',
                     backgroundColor: canAffordFactory ? '#00e676' : '#424242',
                     color: canAffordFactory ? '#000000' : '#aaaaaa', padding: { x: 16, y: 8 }
@@ -4153,9 +4769,9 @@ ${uItem.desc}`, {
                 return;
             }
 
-            // Viewport for 3-across Crafting Catalog
+            // Viewport for responsive 2- or 3-across Crafting Catalog
             const viewX = boxLeft + 12;
-            const viewY = 42;
+            const viewY = headerY + 24;
             const viewW = boxW - 24;
             const viewBottomY = modalH - 36;
             const viewH = Math.max(10, viewBottomY - viewY);
@@ -4171,7 +4787,7 @@ ${uItem.desc}`, {
 
             const recipes = FACTORY_RECIPES;
 
-            const cols = 3;
+            const cols = (viewW < 360) ? 2 : 3;
             const colGap = 8;
             const rowGap = 8;
             const cardW = Math.floor((viewW - ((cols - 1) * colGap) - 10) / cols);
@@ -4315,6 +4931,9 @@ ${uItem.desc}`, {
             if (this.modalContainer) this.modalContainer.destroy();
             const w = this.scale.width;
             const h = this.scale.height;
+            const lm = this.layoutMetrics;
+            const usableW = lm ? lm.usableW : w;
+            const usableH = lm ? lm.usableH : h;
 
             this.modalContainer = this.add.container(0, 0).setDepth(100);
             const overlay = this.add.graphics();
@@ -4322,10 +4941,11 @@ ${uItem.desc}`, {
             overlay.fillRect(0, 0, w, h);
             overlay.setInteractive(new Phaser.Geom.Rectangle(0, 0, w, h), Phaser.Geom.Rectangle.Contains);
 
-            const modalW = Math.min(w * 0.92, 460);
-            const modalH = Math.min(h * 0.85, 420);
-            const modalX = (w - modalW) / 2;
-            const modalY = (h - modalH) / 2;
+            const modalW = Math.min(usableW - 16, 460);
+            const modalH = Math.min(usableH - 16, 400);
+            const modalX = Math.round((w - modalW) / 2);
+            const modalY = Math.round((h - modalH) / 2);
+            const compactArcade = modalH < 360 || modalW < 360;
 
             const box = this.add.graphics();
             box.fillStyle(0x161c28, 0.98);
@@ -4333,37 +4953,42 @@ ${uItem.desc}`, {
             box.lineStyle(2, 0xffca28, 1);
             box.strokeRoundedRect(modalX, modalY, modalW, modalH, 12);
 
-            const title = this.add.text(w / 2, modalY + 26, '🕹️ ARCADE CHALLENGES', {
-                fontSize: '18px', style: 'bold', color: '#ffca28'
+            const title = this.add.text(w / 2, modalY + 22, '🕹️ ARCADE CHALLENGES', {
+                fontSize: compactArcade ? '15px' : '18px', style: 'bold', color: '#ffca28'
             }).setOrigin(0.5);
 
-            const sub = this.add.text(w / 2, modalY + 50, 'Pure sorting skill - Does NOT affect main game save!', {
-                fontSize: '11px', color: '#aaaaaa'
+            const sub = this.add.text(w / 2, modalY + 44, 'Pure sorting skill - Does NOT affect main game save!', {
+                fontSize: compactArcade ? '10px' : '11px', color: '#aaaaaa', align: 'center',
+                wordWrap: { width: modalW - 24 }
             }).setOrigin(0.5);
+
+            const cardPadX = 14;
+            const cardW = modalW - (2 * cardPadX);
+            const cardH = Math.min(112, Math.floor((modalH - 118) / 2));
+            const descWrapW = cardW - 24;
 
             // Dumpster Fire Frenzy Card
-            const card1Y = modalY + 74;
-            const cardW = modalW - 40;
-            const cardH = 110;
+            const card1Y = modalY + 62;
             const c1Box = this.add.graphics();
             c1Box.fillStyle(0x221814, 0.95);
-            c1Box.fillRoundedRect(modalX + 20, card1Y, cardW, cardH, 8);
+            c1Box.fillRoundedRect(modalX + cardPadX, card1Y, cardW, cardH, 8);
             c1Box.lineStyle(1.5, 0xff5722, 1);
-            c1Box.strokeRoundedRect(modalX + 20, card1Y, cardW, cardH, 8);
+            c1Box.strokeRoundedRect(modalX + cardPadX, card1Y, cardW, cardH, 8);
 
-            const c1Title = this.add.text(modalX + 32, card1Y + 12, '🔥 Dumpster Fire Frenzy', {
-                fontSize: '14px', style: 'bold', color: '#ff7043'
+            const c1Title = this.add.text(modalX + cardPadX + 10, card1Y + 8, '🔥 Dumpster Fire Frenzy', {
+                fontSize: compactArcade ? '12.5px' : '14px', style: 'bold', color: '#ff7043'
             });
-            const c1Desc = this.add.text(modalX + 32, card1Y + 34, 'Start with maxed streak & fire active (2X speed!).\nDecaying streak bar drains fast - sort or burn out!', {
-                fontSize: '11px', color: '#ffffff', lineSpacing: 3
+            const c1Desc = this.add.text(modalX + cardPadX + 10, card1Y + 28, 'Start with maxed streak & fire active! Decaying streak bar drains fast - sort or burn out!', {
+                fontSize: compactArcade ? '10px' : '11px', color: '#ffffff', lineSpacing: 2,
+                wordWrap: { width: descWrapW }
             });
             const bestStreak = localStorage.getItem('arrc_arcade_best_streak') || 0;
-            const c1Record = this.add.text(modalX + 32, card1Y + 78, '🏆 Personal Best: ' + bestStreak + ' streak', {
-                fontSize: '11px', style: 'bold', color: '#ffd54f'
-            });
+            const c1Record = this.add.text(modalX + cardPadX + 10, card1Y + cardH - 18, '🏆 Best: ' + bestStreak + ' streak', {
+                fontSize: '10.5px', style: 'bold', color: '#ffd54f'
+            }).setOrigin(0, 0.5);
 
-            const btnPlay1 = this.add.text(modalX + cardW - 10, card1Y + 76, '▶ PLAY', {
-                fontSize: '12px', style: 'bold', backgroundColor: '#ff5722', color: '#ffffff', padding: { x: 14, y: 6 }
+            const btnPlay1 = this.add.text(modalX + cardPadX + cardW - 10, card1Y + cardH - 18, '▶ PLAY', {
+                fontSize: '11.5px', style: 'bold', backgroundColor: '#ff5722', color: '#ffffff', padding: { x: 12, y: 5 }
             }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
 
             btnPlay1.on('pointerup', () => {
@@ -4372,27 +4997,28 @@ ${uItem.desc}`, {
             });
 
             // 500-Piece Clean Up Card
-            const card2Y = modalY + 196;
+            const card2Y = card1Y + cardH + 10;
             const c2Box = this.add.graphics();
             c2Box.fillStyle(0x142022, 0.95);
-            c2Box.fillRoundedRect(modalX + 20, card2Y, cardW, cardH, 8);
+            c2Box.fillRoundedRect(modalX + cardPadX, card2Y, cardW, cardH, 8);
             c2Box.lineStyle(1.5, 0x00bcd4, 1);
-            c2Box.strokeRoundedRect(modalX + 20, card2Y, cardW, cardH, 8);
+            c2Box.strokeRoundedRect(modalX + cardPadX, card2Y, cardW, cardH, 8);
 
-            const c2Title = this.add.text(modalX + 32, card2Y + 12, '🧹 500-Piece Speed Clean', {
-                fontSize: '14px', style: 'bold', color: '#4dd0e1'
+            const c2Title = this.add.text(modalX + cardPadX + 10, card2Y + 8, '🧹 500-Piece Speed Clean', {
+                fontSize: compactArcade ? '12.5px' : '14px', style: 'bold', color: '#4dd0e1'
             });
-            const c2Desc = this.add.text(modalX + 32, card2Y + 34, 'Gigantic stockpile of 500 trash items!\nSort them all as fast as humanly possible.', {
-                fontSize: '11px', color: '#ffffff', lineSpacing: 3
+            const c2Desc = this.add.text(modalX + cardPadX + 10, card2Y + 28, 'Gigantic stockpile of 500 trash items! Sort them all as fast as humanly possible.', {
+                fontSize: compactArcade ? '10px' : '11px', color: '#ffffff', lineSpacing: 2,
+                wordWrap: { width: descWrapW }
             });
             const bestTime = localStorage.getItem('arrc_arcade_best_time');
             const bestTimeStr = bestTime ? (Math.floor(bestTime / 60000) + 'm ' + Math.floor((bestTime % 60000)/1000) + 's') : '--:--';
-            const c2Record = this.add.text(modalX + 32, card2Y + 78, '⏱️ Record Time: ' + bestTimeStr, {
-                fontSize: '11px', style: 'bold', color: '#80deea'
-            });
+            const c2Record = this.add.text(modalX + cardPadX + 10, card2Y + cardH - 18, '⏱️ Record: ' + bestTimeStr, {
+                fontSize: '10.5px', style: 'bold', color: '#80deea'
+            }).setOrigin(0, 0.5);
 
-            const btnPlay2 = this.add.text(modalX + cardW - 10, card2Y + 76, '▶ PLAY', {
-                fontSize: '12px', style: 'bold', backgroundColor: '#0097a7', color: '#ffffff', padding: { x: 14, y: 6 }
+            const btnPlay2 = this.add.text(modalX + cardPadX + cardW - 10, card2Y + cardH - 18, '▶ PLAY', {
+                fontSize: '11.5px', style: 'bold', backgroundColor: '#0097a7', color: '#ffffff', padding: { x: 12, y: 5 }
             }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
 
             btnPlay2.on('pointerup', () => {
@@ -4400,8 +5026,8 @@ ${uItem.desc}`, {
                 this.startArcadeChallenge('cleanup');
             });
 
-            const btnClose = this.add.text(w / 2, modalY + modalH - 24, '✖ CLOSE', {
-                fontSize: '12px', style: 'bold', backgroundColor: '#333333', color: '#ffffff', padding: { x: 20, y: 6 }
+            const btnClose = this.add.text(w / 2, modalY + modalH - 20, '✖ CLOSE', {
+                fontSize: '12px', style: 'bold', backgroundColor: '#333333', color: '#ffffff', padding: { x: 20, y: 5 }
             }).setOrigin(0.5).setInteractive({ useHandCursor: true });
 
             btnClose.on('pointerup', () => {
@@ -4417,6 +5043,11 @@ ${uItem.desc}`, {
 
             const w = this.scale.width;
             const h = this.scale.height;
+            const lm = this.layoutMetrics;
+            const safeTop = lm ? lm.safeTop : 0;
+            const safeBottom = lm ? lm.safeBottom : 0;
+            const usableW = lm ? lm.usableW : w;
+            const isNarrow = w < 440;
 
             const types = ['organic', 'paper', 'glass', 'plastic'];
             const generateArcadeItem = () => {
@@ -4451,20 +5082,23 @@ ${uItem.desc}`, {
             bg.on('pointerdown', () => {});
             this.arcadeContainer.add(bg);
 
-            // Header info
-            const headerY = 25;
-            const challengeTitle = (mode === 'dumpster') ? '🔥 DUMPSTER FIRE FRENZY' : '🧹 500-PIECE CLEAN UP';
-            const titleTxt = this.add.text(w / 2, headerY, challengeTitle, {
-                fontSize: '18px', style: 'bold', color: (mode === 'dumpster' ? '#ff7043' : '#4dd0e1')
-            }).setOrigin(0.5);
+            // Header info (zero overlap between title and EXIT button on narrow phones!)
+            const headerY = safeTop + 20;
+            const challengeTitle = (mode === 'dumpster')
+                ? (isNarrow ? '🔥 DUMPSTER FRENZY' : '🔥 DUMPSTER FIRE FRENZY')
+                : (isNarrow ? '🧹 500-PIECE CLEAN' : '🧹 500-PIECE CLEAN UP');
+            const titleX = isNarrow ? 14 : (w / 2);
+            const titleTxt = this.add.text(titleX, headerY, challengeTitle, {
+                fontSize: isNarrow ? '14px' : '18px', style: 'bold', color: (mode === 'dumpster' ? '#ff7043' : '#4dd0e1')
+            }).setOrigin(isNarrow ? 0 : 0.5, 0.5);
 
             this.arcadeStatsTxt = this.add.text(w / 2, headerY + 28, '', {
-                fontSize: '13px', style: 'bold', color: '#ffffff'
+                fontSize: isNarrow ? '12px' : '13px', style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
             this.arcadeBarGfx = this.add.graphics();
 
-            const btnExit = this.add.text(w - 18, headerY, '✖ EXIT', {
+            const btnExit = this.add.text(w - 14, headerY, '✖ EXIT', {
                 fontSize: '11px', style: 'bold', backgroundColor: '#374151', color: '#ffffff', padding: { x: 10, y: 5 }
             }).setOrigin(1, 0.5).setInteractive({ useHandCursor: true });
 
@@ -4472,46 +5106,56 @@ ${uItem.desc}`, {
 
             this.arcadeContainer.add([titleTxt, this.arcadeStatsTxt, this.arcadeBarGfx, btnExit]);
 
-            // Queue display area
-            this.arcadeQueueItems = [];
-            this.arcadeQueueContainer = this.add.container(0, 0);
-            this.arcadeContainer.add(this.arcadeQueueContainer);
-
-            // Bins Row - Authentic styled bins matching main game with arcade labels
-            const binY = h * 0.72;
-            const binSpacing = Math.min(w / 4.6, 75);
-            const startBinX = (w - (3 * binSpacing)) / 2;
+            // Bins Row - Authentic styled bins matching main game with generous touch & drag zones
+            const binY = Math.round((h - safeBottom) * 0.72);
+            const binSpacing = Math.min(Math.floor((usableW - 24) / 4), 88);
+            const startBinX = Math.round((w - (3 * binSpacing)) / 2);
+            this.arcadeBins = [];
 
             const bins = [
-                { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', color: 0x4caf50 },
-                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', color: 0x2196f3 },
-                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', color: 0x9c27b0 },
-                { id: 'plastic', key: '4', name: 'PLASTIC', sprite: 'bin_yellow', color: 0xffeb3b }
+                { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', sheetKey: 'bin_green_sheet', color: 0x4caf50 },
+                { id: 'paper', key: '2', name: 'PAPER', sprite: 'bin_blue', sheetKey: 'bin_blue_sheet', color: 0x2196f3 },
+                { id: 'glass', key: '3', name: 'GLASS', sprite: 'bin_purple', sheetKey: 'bin_purple_sheet', color: 0x9c27b0 },
+                { id: 'plastic', key: '4', name: 'PLASTIC', sprite: 'bin_yellow', sheetKey: 'bin_yellow_sheet', color: 0xffeb3b }
             ];
 
             bins.forEach((b, idx) => {
-                const bx = startBinX + (idx * binSpacing);
-                if (this.textures.exists(b.sprite)) {
-                    const binSprite = this.add.sprite(bx, binY, b.sprite).setDisplaySize(50, 68);
+                const bx = Math.round(startBinX + (idx * binSpacing));
+                const binW = Math.min(58, binSpacing - 8);
+                const binH = Math.round(binW * 1.32);
+
+                if (b.sheetKey && this.textures.exists(b.sheetKey)) {
+                    const binSprite = this.add.sprite(bx, binY, b.sheetKey, 0).setDisplaySize(binW, binH);
+                    this.arcadeContainer.add(binSprite);
+                } else if (this.textures.exists(b.sprite)) {
+                    const binSprite = this.add.sprite(bx, binY, b.sprite).setDisplaySize(binW, binH);
                     this.arcadeContainer.add(binSprite);
                 } else {
                     const bBox = this.add.graphics();
                     bBox.fillStyle(b.color, 0.85);
-                    bBox.fillRoundedRect(bx - 26, binY - 26, 52, 52, 8);
+                    bBox.fillRoundedRect(bx - (binW / 2), binY - (binH / 2), binW, binH, 8);
                     bBox.lineStyle(2, 0xffffff, 0.9);
-                    bBox.strokeRoundedRect(bx - 26, binY - 26, 52, 52, 8);
+                    bBox.strokeRoundedRect(bx - (binW / 2), binY - (binH / 2), binW, binH, 8);
                     this.arcadeContainer.add(bBox);
                 }
 
-                const bLabel = this.add.text(bx, binY - 44, '[' + b.key + '] ' + b.name, {
-                    fontSize: '10.5px', style: 'bold', color: '#ffffff', backgroundColor: '#111827', padding: { x: 4, y: 2 }
+                const bLabel = this.add.text(bx, binY - Math.round(binH / 2) - 14, isNarrow ? b.name : ('[' + b.key + '] ' + b.name), {
+                    fontSize: isNarrow ? '9.5px' : '10.5px', style: 'bold', color: '#ffffff', backgroundColor: '#111827', padding: { x: 4, y: 2 }
                 }).setOrigin(0.5);
 
-                const hitZone = this.add.rectangle(bx, binY, 60, 74, 0x000000, 0.001).setInteractive({ useHandCursor: true });
+                const hitZone = this.add.zone(bx, binY, Math.max(54, binSpacing - 2), binH + 40)
+                    .setOrigin(0.5)
+                    .setInteractive({ useHandCursor: true });
                 hitZone.on('pointerdown', () => this.sortArcadeTrash(b.id));
 
+                this.arcadeBins.push({ id: b.id, x: bx, y: binY, spacing: binSpacing, h: binH });
                 this.arcadeContainer.add([bLabel, hitZone]);
             });
+
+            // Queue display area (added AFTER bins so dragged arcade item renders ABOVE bins!)
+            this.arcadeQueueItems = [];
+            this.arcadeQueueContainer = this.add.container(0, 0);
+            this.arcadeContainer.add(this.arcadeQueueContainer);
 
             this.renderArcadeQueue();
         }
@@ -4522,11 +5166,14 @@ ${uItem.desc}`, {
 
             const w = this.scale.width;
             const h = this.scale.height;
-            const queueCenterY = h * 0.42;
-            const gap = 52;
-            const startX = w / 2;
+            const queueCenterY = Math.round(h * 0.42);
+            const gap = Math.min(52, Math.max(36, Math.floor(w / 8)));
+            const startX = Math.round(w / 2);
 
-            this.arcadeState.queue.slice(0, 7).forEach((item, idx) => {
+            // Render back-to-front so hero item (idx 0) is always on top
+            const visibleSlice = this.arcadeState.queue.slice(0, 7);
+            for (let idx = visibleSlice.length - 1; idx >= 0; idx--) {
+                const item = visibleSlice[idx];
                 const qx = startX + (idx * gap);
                 const isHero = (idx === 0);
 
@@ -4549,13 +5196,42 @@ ${uItem.desc}`, {
                     heroRing.lineStyle(3, 0xffd700, 1);
                     heroRing.strokeCircle(0, 0, 29);
                     itemCont.add(heroRing);
+
+                    // Allow dragging the hero item into arcade bins as well as tapping bins!
+                    itemCont.setSize(80, 80);
+                    itemCont.setInteractive({ draggable: true, useHandCursor: true });
+                    this.input.setDraggable(itemCont);
+                    itemCont.on('drag', (pointer, dragX, dragY) => {
+                        const isTouch = !!(pointer && (pointer.wasTouch || pointer.pointerType === 'touch'));
+                        itemCont.x = pointer ? pointer.x : dragX;
+                        itemCont.y = (pointer ? pointer.y : dragY) + (isTouch ? -16 : 0);
+                    });
+                    itemCont.on('dragend', (pointer) => {
+                        if (!this.arcadeBins || !this.arcadeState || !this.arcadeState.active) return;
+                        const px = pointer ? pointer.x : itemCont.x;
+                        const py = pointer ? pointer.y : itemCont.y;
+                        let bestBin = null;
+                        let bestDist = Infinity;
+                        for (const ab of this.arcadeBins) {
+                            const d = Phaser.Math.Distance.Between(px, py, ab.x, ab.y);
+                            if (d < Math.max(78, ab.spacing * 0.85) && d < bestDist) {
+                                bestDist = d;
+                                bestBin = ab;
+                            }
+                        }
+                        if (bestBin) {
+                            this.sortArcadeTrash(bestBin.id);
+                        } else {
+                            this.renderArcadeQueue();
+                        }
+                    });
                 } else {
                     itemCont.setScale(0.85);
                     itemCont.setAlpha(0.65 - (idx * 0.07));
                 }
 
                 this.arcadeQueueContainer.add(itemCont);
-            });
+            }
         }
 
         sortArcadeTrash(targetType) {
@@ -4748,7 +5424,8 @@ ${uItem.desc}`, {
                     if (btn && btn.scene) {
                         const hasAff = this.hasCategoryAffordable(cat);
                         const isSel = (this.activeUpgradeCategory === cat);
-                        btn.setText(hasAff ? (iconMap[cat] + ' (!)') : iconMap[cat]);
+                        const baseLbl = btn.baseLabel || iconMap[cat];
+                        btn.setText(hasAff ? (baseLbl + ' (!)') : baseLbl);
                         if (!isSel) btn.setColor(hasAff ? '#ffd700' : '#aaaaaa');
                     }
                 });
@@ -4795,11 +5472,15 @@ ${uItem.desc}`, {
         }
     }
 
+    const initVp = getVisibleViewportSize();
     const config = {
         type: Phaser.AUTO,
         parent: 'game-container',
         resolution: window.devicePixelRatio || 1,
         autoFocus: false,
+        input: {
+            activePointers: 3
+        },
         fps: {
             target: 60,
             forceSetTimeOut: true
@@ -4811,13 +5492,41 @@ ${uItem.desc}`, {
         scale: {
             mode: Phaser.Scale.RESIZE,
             autoCenter: Phaser.Scale.CENTER_BOTH,
-            width: '100%',
-            height: '100%'
+            width: initVp.width,
+            height: initVp.height
         },
         scene: [MainScene]
     };
 
     const game = new Phaser.Game(config);
+
+    // Keep Phaser canvas strictly matched to the real visible viewport on mobile browsers
+    // (handles Chrome/Samsung Internet toolbars, Flip 4 fold/unfold, and orientation changes)
+    let vpSyncTimer = null;
+    function syncGameToVisibleViewport() {
+        const vp = getVisibleViewportSize();
+        const container = document.getElementById('game-container');
+        if (container) {
+            container.style.width = vp.width + 'px';
+            container.style.height = vp.height + 'px';
+        }
+        if (game && game.scale && (game.scale.width !== vp.width || game.scale.height !== vp.height)) {
+            game.scale.resize(vp.width, vp.height);
+        }
+    }
+    function scheduleViewportSync() {
+        if (vpSyncTimer) clearTimeout(vpSyncTimer);
+        vpSyncTimer = setTimeout(syncGameToVisibleViewport, 60);
+    }
+    window.addEventListener('resize', scheduleViewportSync);
+    window.addEventListener('orientationchange', () => {
+        setTimeout(syncGameToVisibleViewport, 120);
+        setTimeout(syncGameToVisibleViewport, 350);
+    });
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', scheduleViewportSync);
+    }
+    syncGameToVisibleViewport();
     </script>
 </body>
 </html>
