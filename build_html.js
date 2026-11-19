@@ -77,9 +77,19 @@ const htmlContent = `<!DOCTYPE html>
     }
 
     function getVisibleViewportSize() {
+        const container = document.getElementById('game-container');
+        const cw = container ? Math.floor(container.clientWidth) : 0;
+        const ch = container ? Math.floor(container.clientHeight) : 0;
+        let w = cw || Math.floor(window.innerWidth || document.documentElement.clientWidth || 800);
+        let h = ch || Math.floor(window.innerHeight || document.documentElement.clientHeight || 600);
+        // On mobile browsers where visualViewport is unzoomed and shorter than 100vh/clientHeight (e.g. dynamic address/bottom bar), use its height
         const vv = window.visualViewport;
-        const w = Math.floor(vv ? vv.width : (window.innerWidth || document.documentElement.clientWidth || 800));
-        const h = Math.floor(vv ? vv.height : (window.innerHeight || document.documentElement.clientHeight || 600));
+        if (vv && Math.abs((vv.scale || 1) - 1) < 0.05) {
+            const vvw = Math.floor(vv.width);
+            const vvh = Math.floor(vv.height);
+            if (vvw > 0 && Math.abs(vvw - w) > 2 && cw === 0) w = vvw;
+            if (vvh > 0 && vvh < h) h = vvh;
+        }
         return { width: Math.max(280, w), height: Math.max(300, h) };
     }
 
@@ -936,10 +946,11 @@ const htmlContent = `<!DOCTYPE html>
             if (!hasStreakLine) return;
 
             // Center streak timer bar directly below the streak badge
-            const barW = Math.min(160, Math.max(110, (this.scale ? this.scale.width : 360) - 40));
-            const barH = 5;
+            const ds = (this.layoutMetrics && this.layoutMetrics.desktopScale) ? this.layoutMetrics.desktopScale : 1;
+            const barW = Math.min(Math.round(165 * Math.min(1.35, ds)), Math.max(110, (this.scale ? this.scale.width : 360) - 40));
+            const barH = ds > 1.15 ? 6 : 5;
             const barX = this.dumpsterStreakText.x - (barW / 2);
-            const barY = this.dumpsterStreakText.y + 11;
+            const barY = this.dumpsterStreakText.y + (ds > 1.15 ? 14 : 11);
 
             // Background slot
             this.dumpsterBarGfx.fillStyle(0x1f2937, 0.9);
@@ -981,11 +992,11 @@ const htmlContent = `<!DOCTYPE html>
             const custScale = this.layoutMetrics ? this.layoutMetrics.gateScale : 1;
 
             // Customer 0 stands on the left outside the gate entrance
-            const gateOffset = Math.round(gateSz * 0.5) + (isMobile ? 16 : 20);
+            const gateOffset = Math.round(gateSz * 0.5) + Math.round((isMobile ? 16 : 22) * custScale);
             const startX = this.gatePos.x - gateOffset;
-            const minMargin = (this.layoutMetrics ? this.layoutMetrics.safeLeft : 0) + (isMobile ? 14 : 18);
+            const minMargin = (this.layoutMetrics ? this.layoutMetrics.safeLeft : 0) + (isMobile ? 14 : 24);
             const availableW = Math.max(50, startX - minMargin);
-            const maxSpacing = isMobile ? 22 : 28;
+            const maxSpacing = Math.round((isMobile ? 22 : 32) * custScale);
             const spacing = count > 1 ? Math.min(maxSpacing, availableW / (count - 1)) : maxSpacing;
 
             const isHidden = (typeof document !== 'undefined') && (document.hidden || document.visibilityState === 'hidden');
@@ -1673,15 +1684,16 @@ const htmlContent = `<!DOCTYPE html>
                     getSlotX: (idx) => Math.round(cust0X - (idx * slotSpacing))
                 };
             } else {
-                const bw = Math.round(72 * shopScale);
-                const bh = Math.round(56 * shopScale);
+                const isDesktop = !!(lm && lm.isDesktop);
+                const bw = Math.round((isDesktop ? 92 : 72) * shopScale);
+                const bh = Math.round((isDesktop ? 70 : 56) * shopScale);
                 const bubbleW = 76;
-                const slotSpacing = Math.round(84 * shopScale);
-                const buildingGap = Math.round(24 * shopScale);
-                const storeGap = Math.round(44 * shopScale);
-                // Center the whole shop + 3-buyer group cleanly inside usableW
+                const slotSpacing = Math.round((isDesktop ? 104 : 84) * shopScale);
+                const buildingGap = Math.round((isDesktop ? 40 : 24) * shopScale);
+                const storeGap = Math.round((isDesktop ? 62 : 44) * shopScale);
+                // Center the whole shop + 3-buyer group cleanly across usableW
                 const totalGroupW = (2 * slotSpacing) + Math.round(bubbleW * shopScale) + storeGap + (2 * bw) + buildingGap;
-                const groupLeft = Math.round(safeLeft + Math.max(12, (usableW - totalGroupW) / 2));
+                const groupLeft = Math.round(safeLeft + Math.max(16, (usableW - totalGroupW) / 2));
                 const slot2X = groupLeft + Math.round((bubbleW * shopScale) / 2);
                 const cust0X = slot2X + (2 * slotSpacing);
                 const storeX = cust0X + storeGap + Math.round(bw / 2);
@@ -1855,11 +1867,18 @@ const htmlContent = `<!DOCTYPE html>
             const isShortLandscape = !isPortrait && usableH < 520;
             const isShortHeight = usableH < 660;
             const isSmallScreen = usableH < 680 || width < 400;
+            const isDesktop = !isMobile && !isShortLandscape && usableW >= 820 && usableH >= 580;
+
+            // Smooth proportional upscaling for PC / wide monitors (1.0x at ~900x620 up to 1.50x at 1920x1080+)
+            const desktopScale = isDesktop
+                ? Math.min(1.50, Math.max(1.0, Math.min(usableW / 940, usableH / 610)))
+                : 1.0;
 
             const hasExtraTypes = !!(this.state && this.state.unlockedTypes && (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric));
-            const topBarY = usableTop + (isShortLandscape ? 4 : (isMobile ? 8 : 14));
+            const topBarY = usableTop + (isShortLandscape ? 4 : (isMobile ? 8 : Math.round(14 * Math.min(1.25, desktopScale))));
 
             // 1. Header zone height (XP bar + HUD card + Nav buttons)
+            const uiScale = isDesktop ? Math.min(1.25, 0.92 + (desktopScale * 0.22)) : 1.0;
             let hudCardY, hudCardH, hudBottomY, navY, navH, headerBottomY;
             if (isMobile) {
                 hudCardY = topBarY + 22;
@@ -1870,38 +1889,43 @@ const htmlContent = `<!DOCTYPE html>
                 headerBottomY = navY + navH;
             } else {
                 hudCardY = topBarY;
-                hudCardH = hasExtraTypes ? (isShortLandscape ? 58 : 68) : (isShortLandscape ? 48 : 56);
+                hudCardH = hasExtraTypes
+                    ? (isShortLandscape ? 58 : Math.round(70 * uiScale))
+                    : (isShortLandscape ? 48 : Math.round(58 * uiScale));
                 hudBottomY = hudCardY + hudCardH;
                 navY = topBarY;
-                navH = isShortLandscape ? 24 : 86;
+                navH = isShortLandscape ? 24 : Math.round(92 * uiScale);
                 headerBottomY = Math.max(hudBottomY, topBarY + navH);
             }
 
-            // 2. Determine shop scale & minimum sky height so buyer bubbles NEVER touch the header
-            const shopScale = isShortLandscape ? Math.max(0.62, Math.min(0.84, usableH / 520)) : (usableH < 600 ? 0.90 : 1.0);
-            const shopClearH = Math.round(90 * shopScale);
-            const minSplitY = headerBottomY + shopClearH + (isShortLandscape ? 2 : 8);
+            // 2. Determine shop scale & minimum sky height so buyer bubbles & buildings NEVER touch the header
+            const shopScale = isShortLandscape
+                ? Math.max(0.62, Math.min(0.84, usableH / 520))
+                : (isDesktop ? Math.min(1.48, desktopScale * 1.02) : (usableH < 600 ? 0.90 : 1.0));
+            const shopClearH = Math.round(94 * shopScale);
+            const minSplitY = headerBottomY + shopClearH + (isShortLandscape ? 2 : 10);
 
             // 3. Determine whether toolbar has active buttons
             const hasPets = this.state && this.state.pets && Object.values(this.state.pets).some(Boolean);
             const hasToolbarItems = !!(this.state && (this.state.unlockedSanitiser || hasPets || this.state.unlockedAutoSort));
 
-            // 4. Ideal bottom-half band heights (at scale 1.0)
-            const baseToolbarPad = 6;
-            const baseToolbarH = hasToolbarItems ? 28 : 8;
-            const baseGapToolbarToQueue = hasToolbarItems ? 8 : 4;
-            const baseQueueH = 56; // 52px item + highlight border
-            const baseGapQueueToBinLabel = 12;
-            const baseBinLabelH = 14;
-            const baseBinH = isShortHeight ? 68 : 80;
-            const baseGapBinToStreak = 12;
-            const baseStreakH = 26; // badge (18) + gap + timer bar (6)
-            const baseGapStreakToGateLabel = 8;
-            const baseGateLabelH = 14;
-            const baseGateH = isShortHeight ? 54 : 62;
-            const baseGapGateToBus = 16;
-            const baseBusH = 52; // body 44 + wheels 7
-            const baseBottomPad = 10;
+            // 4. Ideal bottom-half band heights (scaled up proportionally on PC / widescreen!)
+            const ds = desktopScale;
+            const baseToolbarPad = Math.round(6 * ds);
+            const baseToolbarH = hasToolbarItems ? Math.round(28 * Math.min(1.35, ds)) : Math.round(8 * ds);
+            const baseGapToolbarToQueue = hasToolbarItems ? Math.round(8 * ds) : Math.round(6 * ds);
+            const baseQueueH = Math.round(56 * ds); // 52px item * ds + highlight border
+            const baseGapQueueToBinLabel = Math.round(13 * ds);
+            const baseBinLabelH = Math.round(14 * Math.min(1.35, ds));
+            const baseBinH = Math.round((isShortHeight ? 68 : 80) * ds);
+            const baseGapBinToStreak = Math.round(12 * ds);
+            const baseStreakH = Math.round(26 * Math.min(1.3, ds)); // badge + gap + timer bar
+            const baseGapStreakToGateLabel = Math.round(8 * ds);
+            const baseGateLabelH = Math.round(14 * Math.min(1.3, ds));
+            const baseGateH = Math.round((isShortHeight ? 54 : 62) * ds);
+            const baseGapGateToBus = Math.round(16 * ds);
+            const baseBusH = Math.round(52 * Math.min(1.4, ds)); // body 44 + wheels 7
+            const baseBottomPad = Math.round(10 * ds);
 
             const idealBottomH = baseToolbarPad + baseToolbarH + baseGapToolbarToQueue +
                 baseQueueH + baseGapQueueToBinLabel + baseBinLabelH + baseBinH +
@@ -1913,31 +1937,37 @@ const htmlContent = `<!DOCTYPE html>
 
             // 5. Place horizon splitY cleanly so BOTH top half and bottom half have generous space
             const neededBottomH = Math.round(idealBottomH * vScale);
-            const targetSplitY = Math.round(usableTop + usableH * (isPortrait ? 0.41 : 0.42));
+            const targetSplitY = Math.round(usableTop + usableH * (isPortrait ? 0.41 : 0.40));
             const maxSplitY = Math.max(minSplitY, usableBottom - neededBottomH);
             const splitY = Phaser.Math.Clamp(targetSplitY, minSplitY, maxSplitY);
 
             // 6. Compute exact non-overlapping Y positions for every element below splitY
             const tight = vScale < 0.7;
             const s = (v, minVal = 2) => Math.max(tight ? Math.min(minVal, Math.max(2, Math.floor(v * vScale))) : minVal, Math.round(v * vScale));
-            const queueScale = Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.95 : 1.06)));
-            const gateScale = Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.95 : 1.05)));
-            const busScale = Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.92 : 1.05)));
+            const queueScale = isDesktop
+                ? Math.max(0.95, Math.min(1.48, ds * vScale))
+                : Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.95 : 1.06)));
+            const gateScale = isDesktop
+                ? Math.max(0.95, Math.min(1.45, ds * vScale))
+                : Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.95 : 1.05)));
+            const busScale = isDesktop
+                ? Math.max(0.95, Math.min(1.38, ds * vScale * 0.94))
+                : Math.max(tight ? 0.56 : 0.72, Math.min(1.0, vScale * (tight ? 0.92 : 1.05)));
 
             const toolbarY = splitY + s(baseToolbarPad, 3);
             const toolbarH = hasToolbarItems ? s(baseToolbarH, tight ? 16 : 22) : s(baseToolbarH, 4);
-            const queueHalfH = Math.round((baseQueueH * queueScale) / 2);
+            const queueHalfH = Math.round((56 * queueScale) / 2);
             const queueY = toolbarY + toolbarH + s(baseGapToolbarToQueue, 3) + queueHalfH;
 
             const binLabelH = s(baseBinLabelH, tight ? 9 : 10);
             const binLabelY = queueY + queueHalfH + s(baseGapQueueToBinLabel, tight ? 4 : 6) + Math.round(binLabelH / 2);
-            const binTopY = binLabelY + Math.round(binLabelH / 2) + (tight ? 2 : 3);
+            const binTopY = binLabelY + Math.round(binLabelH / 2) + (tight ? 2 : 4);
             const binH = s(baseBinH, tight ? 32 : 44);
             const binBaselineY = binTopY + binH;
             const binCenterY = Math.round(binTopY + (binH / 2));
 
             const streakY = binBaselineY + s(baseGapBinToStreak, tight ? 5 : 7) + (tight ? 4 : 6);
-            const streakBottomY = streakY + s(20, tight ? 10 : 14);
+            const streakBottomY = streakY + s(Math.round(20 * Math.min(1.3, ds)), tight ? 10 : 14);
 
             const gateSize = s(baseGateH, tight ? 28 : 38);
             const gateLabelH = s(baseGateLabelH, tight ? 8 : 10);
@@ -1959,7 +1989,8 @@ const htmlContent = `<!DOCTYPE html>
             return {
                 width, height, usableW, usableH,
                 safeTop, safeBottom, safeLeft, safeRight, usableTop, usableBottom,
-                isPortrait, isMobile, isShortLandscape, isSmallScreen,
+                isPortrait, isMobile, isShortLandscape, isSmallScreen, isDesktop,
+                desktopScale, uiScale,
                 topBarY, hudCardY, hudCardH, hudBottomY, navY, navH, headerBottomY,
                 shopScale, vScale, queueScale, gateScale, busScale,
                 splitY, toolbarY, toolbarH, hasToolbarItems,
@@ -2127,7 +2158,9 @@ const htmlContent = `<!DOCTYPE html>
             const activeBinCount = Math.max(1, Object.keys(this.state.activeTypes).filter(k => this.state.activeTypes[k]).length);
             const binSideMargin = isMobile ? 8 : 16;
             const binAvailW = Math.max(240, lm.usableW - (2 * binSideMargin));
-            const maxBinSpacing = isSmallScreen ? 86 : 96;
+            const ds = lm.desktopScale || 1;
+            const isDesktop = !!lm.isDesktop;
+            const maxBinSpacing = isDesktop ? Math.round(138 * ds) : (isSmallScreen ? 86 : 96);
             const binSpacing = Math.min(Math.floor(binAvailW / activeBinCount), maxBinSpacing);
             const startBinX = Math.round(lm.safeLeft + (lm.usableW - (binSpacing * (activeBinCount - 1))) / 2);
             this.currentBinSpacing = binSpacing;
@@ -2143,17 +2176,35 @@ const htmlContent = `<!DOCTYPE html>
 
             // 3. QUEUE ROW (Center aligned with equal padding on left and right sides)
             const qScale = lm.queueScale || 1;
-            const minPad = lm.safeLeft + (isMobile ? 10 : 18);
-            const baseGap = Math.round(56 * qScale);
-            const availAssemblyW = Math.max(240, lm.usableW - (isMobile ? 20 : 36));
-            const availQueueSpan = Math.max(140, availAssemblyW - Math.round(84 * qScale));
+            const minPad = lm.safeLeft + (isMobile ? 10 : 24);
+            const baseGap = Math.round((isDesktop ? 64 : 56) * qScale);
+            const availAssemblyW = Math.max(240, lm.usableW - (isMobile ? 20 : 48));
+            const availQueueSpan = Math.max(140, availAssemblyW - Math.round(92 * qScale));
             const actualQueueSpan = Math.min(9 * baseGap, availQueueSpan);
-            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? Math.round(44 * qScale) : Math.round(34 * qScale);
+            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? Math.round(48 * qScale) : Math.round(36 * qScale);
             const totalQueueW = Math.round(28 * qScale) + actualQueueSpan + overflowGap + Math.round(22 * qScale);
             const sidePadding = Math.max(minPad, Math.floor(lm.safeLeft + (lm.usableW - totalQueueW) / 2));
             this.queueStartX = sidePadding + Math.round(28 * qScale);
             this.queueActualSpan = actualQueueSpan;
             this.queueOverflowGap = overflowGap;
+
+            // Subtle industrial conveyor belt track behind the queue items so the conveyor reads cleanly on PC & mobile
+            const beltPadX = Math.round(34 * qScale);
+            const beltLeft = Math.max(lm.safeLeft + 6, this.queueStartX - beltPadX);
+            const beltRight = Math.min(width - lm.safeRight - 6, this.queueStartX + actualQueueSpan + Math.round(32 * qScale));
+            const beltW = Math.max(120, beltRight - beltLeft);
+            const beltH = Math.round(40 * qScale);
+            const conveyorBeltGfx = this.add.graphics().setDepth(9);
+            conveyorBeltGfx.fillStyle(0x111827, 0.52);
+            conveyorBeltGfx.fillRoundedRect(beltLeft, queueY - Math.round(beltH / 2), beltW, beltH, Math.round(10 * qScale));
+            conveyorBeltGfx.lineStyle(2, 0x334155, 0.72);
+            conveyorBeltGfx.strokeRoundedRect(beltLeft, queueY - Math.round(beltH / 2), beltW, beltH, Math.round(10 * qScale));
+            // Subtle belt rollers
+            conveyorBeltGfx.fillStyle(0x475569, 0.45);
+            const rollerStep = Math.max(24, Math.round(36 * qScale));
+            for (let rx = beltLeft + Math.round(14 * qScale); rx < beltRight - Math.round(10 * qScale); rx += rollerStep) {
+                conveyorBeltGfx.fillRect(rx, queueY - Math.round(beltH * 0.34), Math.max(2, Math.round(3 * qScale)), Math.round(beltH * 0.68));
+            }
 
             const hlSize = Math.round(58 * qScale);
             const hlHalf = Math.round(hlSize / 2);
@@ -2185,11 +2236,11 @@ const htmlContent = `<!DOCTYPE html>
             }).setOrigin(0.5);
 
             this.overflowBlockContainer.add([overflowBg, this.overflowNumText, overflowLabel]);
-            this.mainContainer.add([this.conveyorContainer, this.queueHighlight, this.overflowBlockContainer]);
+            this.mainContainer.add([conveyorBeltGfx, this.conveyorContainer, this.queueHighlight, this.overflowBlockContainer]);
 
             // Toolbar above conveyor: Sanitiser station, Pet helpers & Auto-Sort toggle (strictly non-overlapping!)
-            const btnSize = Math.max(22, Math.min(28, lm.toolbarH));
-            const btnSpacing = isMobile ? 5 : 7;
+            const btnSize = Math.max(22, Math.min(isDesktop ? Math.round(36 * Math.min(1.25, ds)) : 28, lm.toolbarH));
+            const btnSpacing = isMobile ? 5 : Math.round(8 * Math.min(1.3, ds));
 
             const activeActionButtons = [];
             if (this.state.unlockedSanitiser) {
@@ -2223,9 +2274,9 @@ const htmlContent = `<!DOCTYPE html>
                 }
             });
 
-            const autoSortReserveW = this.state.unlockedAutoSort ? (isMobile ? 104 : 122) : 0;
+            const autoSortReserveW = this.state.unlockedAutoSort ? (isMobile ? 104 : Math.round(134 * Math.min(1.25, ds))) : 0;
             const totalActionW = (activeActionButtons.length * btnSize) + Math.max(0, (activeActionButtons.length - 1) * btnSpacing);
-            const combinedToolbarW = totalActionW + (autoSortReserveW > 0 && totalActionW > 0 ? 10 : 0) + autoSortReserveW;
+            const combinedToolbarW = totalActionW + (autoSortReserveW > 0 && totalActionW > 0 ? 12 : 0) + autoSortReserveW;
             let clusterStartX = Math.round(lm.safeLeft + (lm.usableW - combinedToolbarW) / 2);
             clusterStartX = Math.max(lm.safeLeft + 8, clusterStartX);
 
@@ -2241,7 +2292,7 @@ const htmlContent = `<!DOCTYPE html>
                 bgGfx.strokeRoundedRect(0, 0, btnSize, btnSize, 6);
 
                 const iconTxt = this.add.text(btnSize / 2, btnSize / 2, act.icon, {
-                    fontSize: btnSize < 25 ? '13px' : '15px'
+                    fontSize: btnSize >= 34 ? '18px' : (btnSize < 25 ? '13px' : '15px')
                 }).setOrigin(0.5);
 
                 const fillGfx = this.add.graphics();
@@ -2278,12 +2329,12 @@ const htmlContent = `<!DOCTYPE html>
                     ? (isMobile ? '▶️ Auto: OFF' : '▶️ Auto-Sort: OFF')
                     : ((isMobile ? '⏸️ Auto: ' : '⏸️ Auto-Sort: ') + (this.state.autoSortDelay / 1000).toFixed(1) + 's');
                 const autoSortX = totalActionW > 0
-                    ? Math.min(width - lm.safeRight - 56, clusterStartX + totalActionW + 10 + Math.round(autoSortReserveW / 2))
+                    ? Math.min(width - lm.safeRight - 64, clusterStartX + totalActionW + 12 + Math.round(autoSortReserveW / 2))
                     : Math.round(width / 2);
                 const btnAutoSort = this.add.text(autoSortX, toolbarY + (btnSize / 2), autoSortLabel, {
-                    fontSize: isMobile ? '9.5px' : '10px', style: 'bold',
+                    fontSize: isDesktop ? Math.round(11 * Math.min(1.25, ds)) + 'px' : (isMobile ? '9.5px' : '10px'), style: 'bold',
                     backgroundColor: this.state.autoSortPaused ? '#374151' : '#1e3a8a',
-                    color: '#ffffff', padding: { x: 7, y: 4 }
+                    color: '#ffffff', padding: isDesktop ? { x: 10, y: 5 } : { x: 7, y: 4 }
                 }).setOrigin(0.5).setDepth(20).setInteractive({ useHandCursor: true });
 
                 btnAutoSort.on('pointerup', () => {
@@ -2293,7 +2344,7 @@ const htmlContent = `<!DOCTYPE html>
                 this.mainContainer.add(btnAutoSort);
             }
 
-            // 4. BINS (Animated Green, Blue, Purple, Yellow + Metal/Fabric, scaled cleanly to never overlap!)
+            // 4. BINS (Animated Green, Blue, Purple, Yellow + Metal/Fabric, scaled cleanly for mobile & bigger on PC!)
             this.bins = [];
             const binData = [
                 { id: 'organic', key: '1', name: 'GREEN', sprite: 'bin_green', count: this.state.resources.organic, sheetKey: 'bin_green_sheet', animKey: 'bin_green_anim' },
@@ -2308,9 +2359,10 @@ const htmlContent = `<!DOCTYPE html>
                 binData.push({ id: 'fabric', key: '6', name: 'FABRIC', sprite: 'bin_fabric', count: this.state.resources.fabric });
             }
 
-            const maxBinVisualW = Math.min(isSmallScreen ? 72 : 82, Math.max(44, binSpacing - 6));
+            const maxBinVisualW = Math.min(isDesktop ? Math.round(115 * ds) : (isSmallScreen ? 72 : 82), Math.max(44, binSpacing - 8));
+            const maxAllowedBinScale = BIN_SPRITE_CONFIG.scale * (isDesktop ? ds * 1.15 : 1.0);
             const binSpriteScale = Math.min(
-                BIN_SPRITE_CONFIG.scale,
+                maxAllowedBinScale,
                 maxBinVisualW / BIN_SPRITE_CONFIG.frameWidth,
                 binH / BIN_SPRITE_CONFIG.frameHeight
             );
@@ -2334,19 +2386,24 @@ const htmlContent = `<!DOCTYPE html>
                 }
 
                 const labelTextStr = compactLabels ? b.name : ('[' + b.key + '] ' + b.name);
-                const labelFontSize = (binSpacing < 60) ? '9px' : ((binSpacing < 72) ? '10px' : '11px');
+                const labelFontSize = isDesktop
+                    ? (Math.round(11.5 * Math.min(1.3, ds)) + 'px')
+                    : ((binSpacing < 60) ? '9px' : ((binSpacing < 72) ? '10px' : '11px'));
                 const label = this.add.text(bx, lm.binLabelY, labelTextStr, {
                     fontSize: labelFontSize, color: '#fff', style: 'bold'
                 }).setOrigin(0.5);
 
                 const countY = binBaselineY - Math.round(Math.min(binH, visualBinH) * 0.42);
+                const countFontSz = isDesktop
+                    ? (Math.round(15 * Math.min(1.35, ds)) + 'px')
+                    : ((binH < 56) ? '12px' : '15px');
                 const countText = this.add.text(bx, countY, '' + b.count, {
-                    fontSize: (binH < 56) ? '12px' : '15px',
-                    color: '#ffffff', stroke: '#000000', strokeThickness: 4, style: 'bold'
+                    fontSize: countFontSz,
+                    color: '#ffffff', stroke: '#000000', strokeThickness: isDesktop ? 5 : 4, style: 'bold'
                 }).setOrigin(0.5).setDepth(2);
 
-                const hlW = Math.max(46, Math.min(binSpacing - 4, visualBinW + 10));
-                const hlH = Math.min(binH, visualBinH) + 8;
+                const hlW = Math.max(46, Math.min(binSpacing - 4, visualBinW + 12));
+                const hlH = Math.min(binH, visualBinH) + 10;
 
                 // Golden hint outline (shows correct bin during drag)
                 const binHighlightGfx = this.add.graphics();
@@ -2396,27 +2453,31 @@ const htmlContent = `<!DOCTYPE html>
 
             // Streak Score Text & Streak Bar Setup (Centered directly under the bins, strictly above gate!)
             this.dumpsterStreakText = this.add.text(streakX, streakY, '🔥 STREAK: ' + this.state.streak + '  |  BEST: ' + this.state.streakHighScore, {
-                fontSize: isSmallScreen ? '10px' : '11px', style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: { x: 10, y: 2 }
+                fontSize: isDesktop ? (Math.round(11.5 * Math.min(1.25, ds)) + 'px') : (isSmallScreen ? '10px' : '11px'),
+                style: 'bold', color: '#ffca28', backgroundColor: '#111827', padding: isDesktop ? { x: 14, y: 3 } : { x: 10, y: 2 }
             }).setOrigin(0.5).setDepth(15);
             this.dumpsterBarGfx = this.add.graphics().setDepth(15);
             this.mainContainer.add([this.dumpsterStreakText, this.dumpsterBarGfx]);
 
             // 5. GATE (Direct Intake onto Conveyor Belt)
-            const gateX = isMobile ? Math.round(lm.safeLeft + lm.usableW * 0.56) : Math.max(lm.safeLeft + 235, Math.round(width * 0.30));
+            const gateX = isMobile
+                ? Math.round(lm.safeLeft + lm.usableW * 0.56)
+                : Math.max(lm.safeLeft + Math.round(255 * ds), Math.round(width * 0.34));
             this.gatePos = { x: gateX, y: bottomY };
 
             this.gateSprite = this.add.sprite(this.gatePos.x, this.gatePos.y, 'gate')
                 .setDisplaySize(lm.gateSize, lm.gateSize)
                 .setDepth(1);
             // Generous touch zone on gate for easy mobile tapping & long-press
-            const gateHitSz = Math.max(66, lm.gateSize + 12);
+            const gateHitSz = Math.max(66, lm.gateSize + 14);
             this.gateTouchZone = this.add.zone(this.gatePos.x, this.gatePos.y, gateHitSz, gateHitSz)
                 .setOrigin(0.5)
                 .setInteractive({ useHandCursor: true });
 
             const gateLabel = isMobile ? 'GATE (TAP)' : 'GATE [SPACE]';
             this.gateText = this.add.text(this.gatePos.x, lm.gateLabelY, gateLabel, {
-                fontSize: isSmallScreen ? '10px' : '11px', color: '#00ff00', style: 'bold'
+                fontSize: isDesktop ? (Math.round(11.5 * Math.min(1.25, ds)) + 'px') : (isSmallScreen ? '10px' : '11px'),
+                color: '#00ff00', style: 'bold'
             }).setOrigin(0.5);
 
             this.autoGateGfx = this.add.graphics();
@@ -2660,24 +2721,29 @@ const htmlContent = `<!DOCTYPE html>
         }
 
         renderRepresentativeBlocks(storeX, factoryX, blockY, bw = 72, bh = 56) {
+            const bScale = Math.max(0.8, bw / 72);
+            const iconFontSz = Math.round(Math.min(40, Math.max(19, 23 * bScale))) + 'px';
+            const lblFontSz = Math.round(Math.min(15, Math.max(9.5, 11 * bScale))) + 'px';
+            const radius = Math.round(7 * Math.min(1.4, bScale));
+
             // STORE BLOCK
             const storeContainer = this.add.container(storeX, blockY).setDepth(6);
             const sGfx = this.add.graphics();
             sGfx.fillStyle(0x1e293b, 0.95);
-            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
+            sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, radius);
             sGfx.lineStyle(2, 0x475569, 1);
-            sGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
+            sGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, radius);
             // Green & white awning
-            const awningH = 11;
+            const awningH = Math.round(Math.max(10, bh * 0.20));
             sGfx.fillStyle(0x15803d, 1);
             sGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, awningH, 3);
             sGfx.fillStyle(0xffffff, 0.35);
             sGfx.fillRect(-bw / 2 + Math.round(bw * 0.18), -bh / 2, Math.round(bw * 0.16), awningH);
             sGfx.fillRect(-bw / 2 + Math.round(bw * 0.52), -bh / 2, Math.round(bw * 0.16), awningH);
 
-            const storeIcon = this.add.text(0, -6, '🏪', { fontSize: bw < 60 ? '20px' : '23px' }).setOrigin(0.5);
-            const storeLabel = this.add.text(0, Math.round(bh / 2) - 10, 'STORE', {
-                fontSize: bw < 60 ? '9.5px' : '11px', style: 'bold', color: '#86efac'
+            const storeIcon = this.add.text(0, -Math.round(bh * 0.08), '🏪', { fontSize: iconFontSz }).setOrigin(0.5);
+            const storeLabel = this.add.text(0, Math.round(bh / 2) - Math.round(10 * Math.min(1.4, bScale)), 'STORE', {
+                fontSize: lblFontSz, style: 'bold', color: '#86efac'
             }).setOrigin(0.5);
             storeContainer.add([sGfx, storeIcon, storeLabel]);
             storeContainer.setSize(bw, bh);
@@ -2698,31 +2764,34 @@ const htmlContent = `<!DOCTYPE html>
             const factTrimColor = isFactUnlocked ? 0x38bdf8 : 0x64748b;
 
             fGfx.fillStyle(factBgColor, 0.95);
-            fGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
+            fGfx.fillRoundedRect(-bw / 2, -bh / 2, bw, bh, radius);
             fGfx.lineStyle(2, factBorderColor, 1);
-            fGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, 7);
+            fGfx.strokeRoundedRect(-bw / 2, -bh / 2, bw, bh, radius);
 
-            // Chimney stack
+            // Chimney stack (scaled proportionally)
+            const chimW = Math.round(10 * Math.min(1.5, bScale));
+            const chimH = Math.round(11 * Math.min(1.5, bScale));
+            const chimX = Math.round(bw / 2 - (16 * Math.min(1.5, bScale)));
             fGfx.fillStyle(factChimneyColor, 1);
-            fGfx.fillRect(bw / 2 - 16, -bh / 2 - 10, 10, 10);
+            fGfx.fillRect(chimX, -bh / 2 - chimH, chimW, chimH);
             fGfx.lineStyle(1.5, factTrimColor, 0.9);
-            fGfx.strokeRect(bw / 2 - 16, -bh / 2 - 10, 10, 10);
+            fGfx.strokeRect(chimX, -bh / 2 - chimH, chimW, chimH);
 
             // Unlocked roof indicator bar
             if (isFactUnlocked) {
                 fGfx.fillStyle(0x0284c7, 1);
-                fGfx.fillRoundedRect(-bw / 2 + 3, -bh / 2 + 2, bw - 6, 4, 2);
+                fGfx.fillRoundedRect(-bw / 2 + 3, -bh / 2 + 2, bw - 6, Math.round(4 * Math.min(1.4, bScale)), 2);
             }
 
-            const factoryIcon = this.add.text(0, -6, '🏭', {
-                fontSize: bw < 60 ? '20px' : '23px'
+            const factoryIcon = this.add.text(0, -Math.round(bh * 0.08), '🏭', {
+                fontSize: iconFontSz
             }).setOrigin(0.5);
             if (!isFactUnlocked) {
                 factoryIcon.setAlpha(0.65);
             }
 
-            const factoryLabel = this.add.text(0, Math.round(bh / 2) - 10, isFactUnlocked ? 'FACTORY' : 'FACTORY 🔒', {
-                fontSize: bw < 60 ? '9.5px' : '10.5px',
+            const factoryLabel = this.add.text(0, Math.round(bh / 2) - Math.round(10 * Math.min(1.4, bScale)), isFactUnlocked ? 'FACTORY' : 'FACTORY 🔒', {
+                fontSize: lblFontSz,
                 style: 'bold',
                 color: isFactUnlocked ? '#38bdf8' : '#f59e0b'
             }).setOrigin(0.5);
@@ -2958,6 +3027,8 @@ const htmlContent = `<!DOCTYPE html>
         renderCenteredXPBar(w, y) {
             const lm = this.layoutMetrics;
             const isMobile = lm ? lm.isMobile : (w < 560);
+            const isDesktop = !!(lm && lm.isDesktop);
+            const uiScale = lm ? (lm.uiScale || 1) : 1;
             const safeLeft = lm ? lm.safeLeft : 0;
             const safeRight = lm ? lm.safeRight : 0;
             const usableW = Math.max(260, w - safeLeft - safeRight);
@@ -2968,21 +3039,23 @@ const htmlContent = `<!DOCTYPE html>
                 bx = Math.round(safeLeft + (usableW - barW) / 2);
             } else {
                 // Keep XP bar cleanly between HUD card (left) and nav buttons (right) even on narrow landscape / tablets
-                const hudRight = safeLeft + 16 + Math.min(250, Math.round(usableW * 0.34)) + 10;
+                const hudW = isDesktop ? Math.round(285 * uiScale) : Math.min(250, Math.round(usableW * 0.34));
+                const hudRight = safeLeft + 16 + hudW + 12;
                 const navLeft = (lm && lm.isShortLandscape)
                     ? (w - safeRight - 240)
-                    : (w - safeRight - 135);
+                    : (w - safeRight - Math.round(145 * uiScale));
                 const freeW = navLeft - hudRight;
+                const maxDesktopBarW = isDesktop ? Math.round(320 * uiScale) : 240;
                 if (freeW >= 150) {
-                    barW = Math.min(240, freeW - 8);
+                    barW = Math.min(maxDesktopBarW, freeW - 12);
                     const centeredX = Math.round((w - barW) / 2);
-                    bx = Phaser.Math.Clamp(centeredX, hudRight + 4, navLeft - barW - 4);
+                    bx = Phaser.Math.Clamp(centeredX, hudRight + 6, navLeft - barW - 6);
                 } else {
                     barW = Math.min(210, Math.max(140, usableW * 0.34));
                     bx = Math.round((w - barW) / 2);
                 }
             }
-            const barH = 18;
+            const barH = isDesktop ? Math.round(20 * uiScale) : 18;
 
             const neededXP = this.state.level * 20;
             const pct = Math.min(1, Math.max(0, this.state.xp / neededXP));
@@ -2998,8 +3071,9 @@ const htmlContent = `<!DOCTYPE html>
             this.xpBarFillGfx.fillRect(bx + 1, y + 1, (barW - 2) * pct, barH - 2);
 
             const sp = this.state.skillPoints || 0;
+            const xpFontSz = isDesktop ? (Math.round(11 * uiScale) + 'px') : (barW < 185 ? '9.5px' : '10.5px');
             this.xpBarText = this.add.text(bx + (barW / 2), y + (barH / 2), 'LVL ' + this.state.level + ' (' + this.state.xp + '/' + neededXP + ' XP) ⭐' + sp + ' SP', {
-                fontSize: barW < 185 ? '9.5px' : '10.5px', style: 'bold', color: '#ffffff'
+                fontSize: xpFontSz, style: 'bold', color: '#ffffff'
             }).setOrigin(0.5);
 
             this.xpBarConfig = { bx, y, barW, barH, w };
@@ -3023,11 +3097,15 @@ const htmlContent = `<!DOCTYPE html>
 
         renderTopHUDBar(w, topBarY, isMobile) {
             const lm = this.layoutMetrics;
+            const isDesktop = !!(lm && lm.isDesktop);
+            const uiScale = lm ? (lm.uiScale || 1) : 1;
             const safeLeft = lm ? lm.safeLeft : 0;
             const usableW = lm ? lm.usableW : w;
             const cardX = isMobile ? (safeLeft + 10) : (safeLeft + 16);
             const cardY = lm ? lm.hudCardY : (isMobile ? (topBarY + 22) : 20);
-            const cardW = isMobile ? (usableW - 20) : Math.min(255, Math.round(usableW * 0.36));
+            const cardW = isMobile
+                ? (usableW - 20)
+                : (isDesktop ? Math.min(Math.round(285 * uiScale), Math.round(usableW * 0.34)) : Math.min(255, Math.round(usableW * 0.36)));
             const hasExtraTypes = (this.state.unlockedTypes.metal || this.state.unlockedTypes.fabric);
             const cardH = lm ? lm.hudCardH : (hasExtraTypes ? 68 : 54);
 
@@ -3052,8 +3130,11 @@ const htmlContent = `<!DOCTYPE html>
                 if (this.state.unlockedTypes.fabric) text += '🌸 Fabric: ' + (r.fabric || 0);
             }
 
-            this.hudTextObj = this.add.text(cardX + 9, cardY + 5, text, {
-                fontSize: (cardW < 235 || w < 350) ? '10px' : '11px', style: 'bold', color: '#ffffff', lineSpacing: 2
+            const hudFontSz = isDesktop
+                ? (Math.round(11.5 * uiScale) + 'px')
+                : ((cardW < 235 || w < 350) ? '10px' : '11px');
+            this.hudTextObj = this.add.text(cardX + (isDesktop ? 12 : 9), cardY + (isDesktop ? 7 : 5), text, {
+                fontSize: hudFontSz, style: 'bold', color: '#ffffff', lineSpacing: isDesktop ? 3 : 2
             });
 
             this.mainContainer.add([cardBg, this.hudTextObj]);
@@ -3241,17 +3322,23 @@ const htmlContent = `<!DOCTYPE html>
 
                 this.mainContainer.add([btnDecor, this.btnUpgrades, btnArcade]);
             } else {
+                const isDesktop = !!(lm && lm.isDesktop);
+                const uiScale = lm ? (lm.uiScale || 1) : 1;
                 const rx = w - safeRight - 16;
                 const y0 = lm ? lm.topBarY : 20;
-                const btnDecor = this.add.text(rx, y0, '🪴 DECOR', { fontSize: '11px', style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                const stepY = Math.round(31 * uiScale);
+                const navFont = isDesktop ? (Math.round(11.5 * uiScale) + 'px') : '11px';
+                const navPad = isDesktop ? { x: 10, y: 6 } : { x: 7, y: 5 };
+
+                const btnDecor = this.add.text(rx, y0, '🪴 DECOR', { fontSize: navFont, style: 'bold', color: '#a5d6a7', backgroundColor: '#1e293b', padding: navPad })
                     .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => this.openModal('decorations'));
 
-                this.btnUpgrades = this.add.text(rx, y0 + 30, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: '11px', style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                this.btnUpgrades = this.add.text(rx, y0 + stepY, hasAnyAfford ? '🛠️ UPGRADES (!)' : '🛠️ UPGRADES', { fontSize: navFont, style: 'bold', color: '#4fc3f7', backgroundColor: '#1e293b', padding: navPad })
                     .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                         this.openModal('upgrades', 'gate');
                     });
 
-                const btnArcade = this.add.text(rx, y0 + 60, '🕹️ ARCADE', { fontSize: '11px', style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: { x: 7, y: 5 } })
+                const btnArcade = this.add.text(rx, y0 + (2 * stepY), '🕹️ ARCADE', { fontSize: navFont, style: 'bold', color: '#ffeb3b', backgroundColor: '#1e293b', padding: navPad })
                     .setOrigin(1, 0).setInteractive({ useHandCursor: true }).on('pointerup', () => {
                         this.openArcadeModal();
                     });
@@ -3356,19 +3443,20 @@ const htmlContent = `<!DOCTYPE html>
             const height = (this.scale && this.scale.height) ? this.scale.height : (window.innerHeight || 600);
             const lm = this.layoutMetrics;
             const isMobile = lm ? lm.isMobile : ((height > width && width < 640) || width < 560);
+            const isDesktop = !!(lm && lm.isDesktop);
             const safeLeft = lm ? lm.safeLeft : 0;
             const usableW = lm ? lm.usableW : width;
             const qScale = lm ? (lm.queueScale || 1) : 1;
 
-            const minPad = safeLeft + (isMobile ? 10 : 18);
-            const baseGap = Math.round(56 * qScale);
+            const minPad = safeLeft + (isMobile ? 10 : 24);
+            const baseGap = Math.round((isDesktop ? 64 : 56) * qScale);
             const weights = [1.0, 0.95, 0.85, 0.75, 0.65, 0.55, 0.45, 0.35, 0.25];
             const totalWeight = 5.8;
 
-            const availAssemblyW = Math.max(240, usableW - (isMobile ? 20 : 36));
-            const availQueueSpan = Math.max(140, availAssemblyW - Math.round(84 * qScale));
+            const availAssemblyW = Math.max(240, usableW - (isMobile ? 20 : 48));
+            const availQueueSpan = Math.max(140, availAssemblyW - Math.round(92 * qScale));
             const actualQueueSpan = Math.min(9 * baseGap, availQueueSpan);
-            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? Math.round(44 * qScale) : Math.round(34 * qScale);
+            const overflowGap = (actualQueueSpan >= 9 * baseGap) ? Math.round(48 * qScale) : Math.round(36 * qScale);
             const totalQueueW = Math.round(28 * qScale) + actualQueueSpan + overflowGap + Math.round(22 * qScale);
             const sidePadding = Math.max(minPad, Math.floor(safeLeft + (usableW - totalQueueW) / 2));
             const qStartX = sidePadding + Math.round(28 * qScale);
@@ -3587,8 +3675,8 @@ const htmlContent = `<!DOCTYPE html>
                         this.queueHighlight.setVisible(true);
                         this.queueHighlight.setPosition(targetX, qY);
 
-                        // Generous touch-friendly grab area centered on the hero rubbish item
-                        const hitSize = isMobile ? 88 : 74;
+                        // Generous grab area centered on the hero rubbish item (scaled with qScale on PC)
+                        const hitSize = isMobile ? 88 : Math.round(74 * Math.max(1, qScale));
                         item.container.setSize(hitSize, hitSize);
                         item.container.setInteractive({ draggable: true, useHandCursor: true });
                         this.input.setDraggable(item.container);
@@ -5244,15 +5332,17 @@ const htmlContent = `<!DOCTYPE html>
 
             this.arcadeContainer.add([titleTxt, btnBgToggle, btnExit, this.arcadeStatsTxt, this.arcadeBarGfx]);
 
-            // Bins Row - Authentic animated wheelie bin sprites matching main game!
+            // Bins Row - Authentic animated wheelie bin sprites matching main game (scaled up on PC!)
+            const ds = lm ? (lm.desktopScale || 1) : 1;
+            const isDesktop = !!(lm && lm.isDesktop);
             const splitY = this.splitY || Math.round(h * 0.42);
-            const binBaselineY = Math.min(h - safeBottom - 26, Math.max(Math.round(h * 0.78), splitY + 170));
-            const binSpacing = Math.min(Math.floor((usableW - 24) / 4), 104);
+            const binBaselineY = Math.min(h - safeBottom - 26, Math.max(Math.round(h * 0.80), splitY + Math.round(185 * ds)));
+            const binSpacing = Math.min(Math.floor((usableW - 24) / 4), isDesktop ? Math.round(140 * ds) : 104);
             const startBinX = Math.round((w - (3 * binSpacing)) / 2);
-            const maxBinW = Math.min(78, Math.max(48, binSpacing - 8));
-            const maxBinH = Math.min(98, Math.round((h - safeBottom - splitY) * 0.38));
+            const maxBinW = Math.min(isDesktop ? Math.round(110 * ds) : 78, Math.max(48, binSpacing - 8));
+            const maxBinH = Math.min(isDesktop ? Math.round(115 * ds) : 98, Math.round((h - safeBottom - splitY) * 0.42));
             const binScale = Math.min(
-                BIN_SPRITE_CONFIG.scale,
+                BIN_SPRITE_CONFIG.scale * (isDesktop ? ds * 1.15 : 1.0),
                 maxBinW / BIN_SPRITE_CONFIG.frameWidth,
                 maxBinH / BIN_SPRITE_CONFIG.frameHeight
             );
@@ -5328,11 +5418,13 @@ const htmlContent = `<!DOCTYPE html>
 
             const w = this.scale.width;
             const h = this.scale.height;
+            const lm = this.layoutMetrics;
+            const ds = (lm && lm.isDesktop) ? (lm.desktopScale || 1) : 1;
             const splitY = this.splitY || Math.round(h * 0.42);
             const firstBin = (this.arcadeBins && this.arcadeBins[0]) ? this.arcadeBins[0] : null;
             const binTop = firstBin ? (firstBin.baselineY - firstBin.h - 24) : Math.round(h * 0.62);
-            const queueCenterY = Math.round(Math.max(splitY + 42, Math.min(binTop - 52, splitY + 62)));
-            const gap = Math.min(54, Math.max(38, Math.floor(w / 8)));
+            const queueCenterY = Math.round(Math.max(splitY + Math.round(44 * ds), Math.min(binTop - Math.round(54 * ds), splitY + Math.round(68 * ds))));
+            const gap = Math.min(Math.round(62 * ds), Math.max(38, Math.floor(w / 8)));
             const startX = Math.round(w / 2);
 
             // Render back-to-front so hero item (idx 0) is always on top
@@ -5360,7 +5452,7 @@ const htmlContent = `<!DOCTYPE html>
                 }
 
                 if (isHero) {
-                    itemCont.setScale(1.18);
+                    itemCont.setScale(1.18 * ds);
                     const heroRing = this.add.graphics();
                     heroRing.lineStyle(4, 0x000000, 0.45);
                     heroRing.strokeRoundedRect(-29, -29, 58, 58, 8);
@@ -5397,7 +5489,7 @@ const htmlContent = `<!DOCTYPE html>
                         }
                     });
                 } else {
-                    itemCont.setScale(0.85);
+                    itemCont.setScale(0.85 * ds);
                     itemCont.setAlpha(0.70 - (idx * 0.08));
                 }
 
@@ -5665,13 +5757,6 @@ const htmlContent = `<!DOCTYPE html>
         }
     }
 
-    const initVp = getVisibleViewportSize();
-    const initContainer = document.getElementById('game-container');
-    if (initContainer) {
-        initContainer.style.width = initVp.width + 'px';
-        initContainer.style.height = initVp.height + 'px';
-    }
-
     const config = {
         type: Phaser.AUTO,
         parent: 'game-container',
@@ -5691,44 +5776,57 @@ const htmlContent = `<!DOCTYPE html>
         scale: {
             mode: Phaser.Scale.RESIZE,
             autoCenter: Phaser.Scale.CENTER_BOTH,
-            width: initVp.width,
-            height: initVp.height
+            width: '100%',
+            height: '100%'
         },
         scene: [MainScene]
     };
 
     const game = new Phaser.Game(config);
 
-    // Keep Phaser canvas strictly matched to the real visible viewport on mobile browsers
-    // (handles Chrome/Samsung Internet toolbars, Flip 4 fold/unfold, and orientation changes)
+    // Keep Phaser canvas strictly matched to the real visible viewport on BOTH PC (including DevTools toggle / fullscreen)
+    // and mobile browsers (Chrome/Samsung Internet toolbars, Flip 4 fold/unfold, orientation changes)
     let vpSyncTimer = null;
     function syncGameToVisibleViewport() {
+        if (!game || !game.isBooted || !game.canvas || !game.scale) return;
         const vp = getVisibleViewportSize();
-        const container = document.getElementById('game-container');
-        if (container) {
-            container.style.width = vp.width + 'px';
-            container.style.height = vp.height + 'px';
-        }
-        // Only resize Phaser once its canvas & ScaleManager have finished booting!
-        if (game && game.isBooted && game.canvas && game.scale &&
-            (game.scale.width !== vp.width || game.scale.height !== vp.height)) {
+        const needsResize = (game.scale.width !== vp.width || game.scale.height !== vp.height);
+        if (needsResize) {
             game.scale.resize(vp.width, vp.height);
+            game.scale.refresh();
+        }
+        // Ensure canvas CSS size never stays stuck at a previous emulated device size
+        if (game.canvas.style.width !== vp.width + 'px' || game.canvas.style.height !== vp.height + 'px') {
+            game.canvas.style.width = vp.width + 'px';
+            game.canvas.style.height = vp.height + 'px';
         }
     }
-    function scheduleViewportSync() {
+    function scheduleViewportSync(delayMs = 50) {
         if (vpSyncTimer) clearTimeout(vpSyncTimer);
-        vpSyncTimer = setTimeout(syncGameToVisibleViewport, 60);
+        vpSyncTimer = setTimeout(() => {
+            syncGameToVisibleViewport();
+            // Secondary settle pass catches DevTools panel close / mobile toolbar animation finishes
+            setTimeout(syncGameToVisibleViewport, 180);
+        }, delayMs);
     }
     if (game && game.events) {
-        game.events.once('ready', syncGameToVisibleViewport);
+        game.events.once('ready', () => scheduleViewportSync(20));
     }
-    window.addEventListener('resize', scheduleViewportSync);
+    window.addEventListener('resize', () => scheduleViewportSync(40));
+    document.addEventListener('fullscreenchange', () => scheduleViewportSync(60));
     window.addEventListener('orientationchange', () => {
         setTimeout(syncGameToVisibleViewport, 120);
         setTimeout(syncGameToVisibleViewport, 350);
     });
     if (window.visualViewport) {
-        window.visualViewport.addEventListener('resize', scheduleViewportSync);
+        window.visualViewport.addEventListener('resize', () => scheduleViewportSync(40));
+    }
+    if (typeof ResizeObserver !== 'undefined') {
+        const containerEl = document.getElementById('game-container');
+        if (containerEl) {
+            const ro = new ResizeObserver(() => scheduleViewportSync(30));
+            ro.observe(containerEl);
+        }
     }
     </script>
 </body>
